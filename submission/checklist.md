@@ -19,8 +19,10 @@
       begins with `nebius:`. Record only after this succeeds.
 - [x] Run `python -m unittest discover -s tests -v` (168 tests passed October 30,
       with `FORCE_MOCK=1` for the regression run).
-- [ ] Create a **new public GitHub repository** for this adaptation; keep the
+- [x] Create a **new public GitHub repository** for this adaptation; keep the
       original repository unchanged. Confirm GitHub detects the root MIT license.
+      Published as https://github.com/puneetpahuja-eaton/prism-spectra-ai;
+      anonymous access and GitHub's MIT detection verified October 30.
 - [x] If deploying, set the intended Google Cloud project, provision the
       separate resources, add the Token Factory key to Secret Manager as
       `nebius-api-key`, and deploy `kairos-ai-nebius`. Verify the public URL and
