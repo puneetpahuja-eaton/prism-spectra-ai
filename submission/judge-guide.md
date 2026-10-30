@@ -20,6 +20,11 @@ inference may take time; wait for the page to finish before clicking again.
    escalation?" A small, explicitly synthetic knowledge corpus is pre-indexed.
    The answer should include source references. Plan and Agent modes use the
    same device-scoped assistant for plans and synthetic artifact generation.
+   The lower-right **Specta** launcher opens the same conversation on every
+   screen. Dataset/monitoring generators ask missing questions directly in chat;
+   reply there to continue rather than restarting or clicking a clarification
+   button. Switch devices to verify conversation isolation. New chat clears only
+   the current device's session conversation, not stored data.
 3. **Live Monitoring:** explicitly select the demo device, enable **Use built-in
    simulated feed**, then click Start. Observe changing readings, then click Stop. This exercises the live
    polling engine, not a physical device. Authorized REST sources can be

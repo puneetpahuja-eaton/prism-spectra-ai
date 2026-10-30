@@ -63,9 +63,10 @@ to **off** for simulation, with no endpoint or hex encoding preselected.
    response paths and decoding rules. The assistant asks about missing details
    instead of choosing industry defaults. An unanswered clarification does not
    authorize invented specifications.
-4. Generated monitoring parameters and dataset metrics must include a passage
-   from the supplied material containing their literal field values. Missing
-   or unverifiable passages are rejected. Review a monitoring plan before applying
+4. Generated monitoring parameters and dataset metrics must cite exact passages
+   from the supplied material containing their literal field values. Separate
+   passages can support a field's name, unit and limits. Missing or unverifiable
+   evidence becomes a conversational clarification. Review a monitoring plan before applying
    it. Source membership checks do not prove semantic correctness.
 5. Generated user-device datasets use independent illustrative signals within
    supplied ranges. They do not assume three phases, electrical relationships or
@@ -81,8 +82,9 @@ to **off** for simulation, with no endpoint or hex encoding preselected.
    reported, not filled with guessed values. Simulated feed changes require restart.
 
 The AI is **not retrained** on your device. It retrieves the selected device's
-sources at runtime (RAG). User guidance in a conversation applies there; save
-guidance in Data Sources when it should be reused across pages and sessions.
+sources at runtime (RAG). Specta shares device-scoped conversation guidance across
+pages in the current authenticated browser session; save guidance in Data Sources
+when it should be reused in future sessions.
 These safeguards reduce unsupported assumptions but do not guarantee that a
 language model cannot hallucinate; engineer review remains necessary.
 
@@ -97,6 +99,44 @@ Cloud Run instances; configure a private GCS bucket for persistent uploaded data
 Tavily stays optional and separate: public product, symptom and approved domains
 start blank, require explicit input and consent, and are not promoted into
 private device truth or control instructions.
+
+## Specta: conversational assistant on every screen
+
+Open **Specta** from the lower-right chat button on any page, or use the full
+**Ask the device** workspace. The responsive dock uses a Copilot-inspired layout:
+device context, Ask / Plan / Agent selector, scrollable conversation, fenced code
+with Copy, downloadable responses/artifacts and a file-enabled message composer.
+It is not the VS Code extension and does not have terminal or editor access.
+
+- Select a device explicitly. The dock and workspace share its conversation,
+  active task and attachments; switching devices restores separate conversations.
+- **Ask** answers questions. **Plan** proposes work without executing it.
+  **Agent** generates datasets, monitoring plans and other artifacts.
+- **Build a dataset for Analysis** starts generation immediately. If units, ranges
+  or other necessary facts are missing, Specta asks up to three focused questions
+  in the conversation. Reply in either chat surface to continue the same task.
+  There is no separate clarification button or answers form. Selected duration,
+  sampling and repository reference are retained. Active **Task settings** let you
+  correct the reference or sampling; then send `retry`.
+- The monitoring builder follows the same flow. Downloads, source evidence and
+  reviewed application appear inside the conversation. Generation never starts
+  polling. Engineers/admins must verify the plan and supply the endpoint; stop
+  any existing live run before applying a different plan.
+- Authorized chat attachments (5 MB per file; 120,000 extracted characters total)
+  are sent to the configured AI provider as context, not silently added to the
+  permanent corpus or sent to Tavily. Do not upload secrets or employer-private data.
+- Provider, invalid-output and file failures remain explicit assistant responses,
+  not fake successes. The pending task is retained for correction/retry. Missing
+  device facts are never replaced with guessed specifications. Generation can
+  correct schema errors once and unsupported model-written citations once before
+  reporting a failure; these bounded corrections never relax validation or
+  convert the model's previous claims into source evidence.
+- **New chat** clears the current device's conversation, attachments and pending
+  task, without deleting stored devices, documents or datasets. Conversation state
+  is session-local, not durable across browser reconnection/server restarts.
+- Loading a dataset requires admin access and explicit replacement confirmation.
+  Monitoring application requires engineer/admin access and source review.
+  Specta cannot control physical equipment or invoke public research automatically.
 
 ## Nebius Token Factory
 

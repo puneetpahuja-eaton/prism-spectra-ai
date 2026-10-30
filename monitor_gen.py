@@ -5,9 +5,8 @@ polling interval, and an event-log parameter plus a decode spec, so the existing
 REST poller can monitor them. Event logs rarely decode trivially, so the flow
 asks clarifying questions about the event structure first.
 
-Flow mirrors the dataset builder:
-  1. clarifying_questions(): the model asks about params, interval, event-log layout.
-  2. generate_plan(): the model returns a compact JSON plan grounded in the docs.
+generate_plan returns a compact plan or raises ClarificationNeeded for the
+conversation to collect missing facts and resume the same request.
 The plan maps straight onto the Live Monitoring config (monitored params + an
 optional event-log decode spec).
 """
@@ -16,19 +15,20 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 import rag
-from gemini_client import generate_json, generate_text, is_live
-from device_grounding import SOURCE_ONLY, verify_quote, verify_unit
+from gemini_client import generate_json, is_live
+from device_grounding import ClarificationNeeded, SOURCE_ONLY, generate_grounded, verify_passages, verify_quote
 from live.rest_adapter import _PARAM_URL
 
 
 class MonitorParam(BaseModel):
-    pid: str = Field(description="Exact parameter ID from supplied device context")
+    pid: str = Field(description="Exact parameter ID from supplied sources OR explicit user guidance, including the current reply")
     label: str = Field(default="", description="Source-defined parameter label")
     unit: str = Field(default="")
     lower: float | None = Field(default=None, description="Lower alarm limit, if known")
     upper: float | None = Field(default=None, description="Upper alarm limit, if known")
     path: str = Field(default="", description="JSON path to the value if not the default 'value'")
-    evidence: str = Field(default="", description="Exact supplied passage containing this ID, unit and any limits")
+    evidence: str = Field(default="", description="Copy exact text from the user's reply or supplied source, without prefixes or paraphrasing; user replies themselves are evidence")
+    evidence_passages: list[str] = Field(default_factory=list)
 
 
 class EventLogSpec(BaseModel):
@@ -48,35 +48,30 @@ class MonitorPlan(BaseModel):
     params: list[MonitorParam] = Field(default_factory=list)
     event_log: EventLogSpec | None = Field(default=None)
     notes: str = Field(default="")
-    missing_details: list[str] = Field(default_factory=list)
+    missing_details: list[str] = Field(default_factory=list, description="Only missing device facts, never requests for document quotes when the user has supplied the facts explicitly")
+    answer: str = Field(default="", description="Brief response in plain language; no schema or validation jargon")
 
 
 _SCHEMA_HINT = (
-    "Return a MonitorPlan. Use null for unknown limits and encoding. Every parameter needs an exact evidence passage "
-    "containing its ID, units and any limits. Populate missing_details when necessary facts are missing; "
-    "do not invent them. Leave event_log null unless the supplied material specifies the full layout."
+    "Return a MonitorPlan. Explicit user guidance and answers are authoritative supplied sources for this task, "
+    "just like device docs/code. Copy the user's actual words into evidence or evidence_passages. "
+    "A separate document is NOT required to reconfirm facts explicitly supplied by the user. "
+    "Never ask for exact document passages or citations from the user; select the quotes yourself. "
+    "Set missing_details=[] when IDs, units, value paths and polling are already supplied. "
+    "Leave optional limits/event decoding/hex encoding unset when unknown or intentionally excluded; don't ask for them. "
+    "Use null for unknown limits and encoding. Every parameter needs an exact evidence passage "
+    "for its ID, units and any limits. Use evidence_passages when facts occur in different supplied "
+    "passages. Copy citations yourself; do not ask users to format source quotes. Populate missing_details "
+    "with at most 3 focused, plain-language questions when facts are missing, and answer with what is known. "
+    "Do not re-ask answered questions or demand schema names. Never invent device facts. "
+    "Leave event_log null unless the supplied material specifies the full layout."
 )
 
 
 def _context(device_id: str) -> str:
     chunks = rag.retrieve(device_id, "parameter identifiers register map event log units thresholds "
                                      "encoding REST interface", top_k=20)
-    return "\n\n".join(c.get("text", "")[:900] for c in chunks)
-
-
-def clarifying_questions(device_id: str, request: str, reference: str = "") -> str:
-    prompt = (
-        f"{SOURCE_ONLY}\n"
-        "A user wants to set up LIVE monitoring of a device over REST. Before building the plan, ask 3-6 "
-        "concise clarifying questions that materially change it: which exact parameters/IDs to poll, the "
-        "polling interval, alarm thresholds, and—critically—the EVENT LOG structure (which parameter/"
-        "endpoint holds it, how entries are encoded, where the event code lives, how to decode it). Ask "
-        "only questions; do not build the plan yet. Use the context to avoid asking what is already known.\n\n"
-        f"Device context:\n{_context(device_id)[:8000]}\n\n"
-        f"Referenced parameter file (optional):\n{reference[:8000]}\n\n"
-        f"User request: {request}"
-    )
-    return generate_text(prompt, temperature=0.3)
+    return rag._format_context(chunks)[:60000]
 
 
 def generate_plan(device_id: str, request: str, reference: str = "", answers: str = "") -> dict:
@@ -87,33 +82,49 @@ def generate_plan(device_id: str, request: str, reference: str = "", answers: st
     prompt = (
         f"{SOURCE_ONLY}\n"
         "Design a COMPACT live-monitoring plan for this device over REST, grounded in the context and the "
-        "referenced parameter list. Resolve real parameter IDs and units. Include alarm thresholds where the "
-        "docs imply them. If the user described an event log, fill event_log with a concrete decode spec; "
+        "referenced parameter list OR explicit user answers. Include only explicitly supplied alarm thresholds. "
+        "If the user described an event log, fill event_log with a concrete decode spec; "
         "otherwise set it to null. Never assume IDs, limits, units, encoding or polling interval.\n\n"
         f"{_SCHEMA_HINT}\n\n"
-        f"Device context:\n{context[:8000]}\n\n"
-        f"Referenced parameter file (optional, authoritative for IDs/units):\n{reference[:12000]}\n\n"
+        f"Device context:\n{context[:60000]}\n\n"
+        f"Referenced parameter file (optional, authoritative for IDs/units):\n{reference[:120000]}\n\n"
         f"User request: {request}\n\n"
         f"User answers to clarifying questions (if any): {answers}"
     )
-    plan = MonitorPlan.model_validate(generate_json(prompt, MonitorPlan, max_output_tokens=16384))
+    return generate_grounded(generate_json, prompt, MonitorPlan, lambda raw: _validate_plan(raw, supplied))
+
+
+def _validate_plan(raw: dict, supplied: str) -> dict:
+    plan = MonitorPlan.model_validate(raw)
     if plan.missing_details or not plan.params or plan.poll_interval_s is None:
-        raise ValueError("Provide missing monitoring details: " + "; ".join(
-            plan.missing_details or ["parameter IDs with evidence and the polling interval"]))
+        raise ClarificationNeeded(plan.missing_details or [
+            "Which documented parameters should I monitor, and how often should I poll them?"
+        ], answer=plan.answer)
     for param in plan.params:
-        verify_unit(param.unit, param.evidence)
-        verify_quote(param.evidence, supplied,
-                     [param.pid, param.unit] + ([param.label] if param.label else []) +
-                     ([param.path] if param.path else []) +
-                     [v for v in (param.lower, param.upper) if v is not None])
+        try:
+            verify_passages(param.evidence, param.evidence_passages, supplied,
+                            [param.pid, param.unit] + ([param.label] if param.label else []) +
+                            ([param.path] if param.path else []) +
+                            [v for v in (param.lower, param.upper) if v is not None], unit=param.unit)
+        except ValueError as error:
+            raise ClarificationNeeded([
+                f"I couldn't verify the supplied evidence for parameter **{param.pid}**. "
+                "Can you confirm its unit, value path and any limits, or attach the relevant source?"
+            ], repairable=True) from error
     if plan.hex_as_float is not None:
-        verify_quote(plan.encoding_evidence, supplied, [])
+        try:
+            verify_quote(plan.encoding_evidence, supplied, [])
+        except ValueError as error:
+            raise ClarificationNeeded(["How does this device encode hexadecimal values? Please supply its decoding rule."], repairable=True) from error
     if plan.event_log is not None:
         event = plan.event_log
         if not event.pid or event.word_index < 0:
-            raise ValueError("Provide the event-log parameter and documented word index, or leave event_log unset.")
-        verify_quote(event.evidence, supplied,
-                     [event.pid, event.word_index, *event.code_map.keys(), *event.code_map.values()])
+            raise ClarificationNeeded(["Which parameter contains the event log, and which word holds its event code?"], repairable=True)
+        try:
+            verify_quote(event.evidence, supplied,
+                         [event.pid, event.word_index, *event.code_map.keys(), *event.code_map.values()])
+        except ValueError as error:
+            raise ClarificationNeeded(["Can you supply the documented event-log layout and code meanings, or should I leave event decoding disabled?"], repairable=True) from error
     return plan.model_dump()
 
 

@@ -1,10 +1,10 @@
 """Generate an Analysis-ready dataset from a natural-language request via the configured model.
 
 Flow:
-  1. clarifying_questions(): the model asks what it needs before generating.
-  2. generate_spec(): the model returns a compact JSON spec (assets, metrics with
+  1. generate_spec(): the model returns a compact JSON spec (assets, metrics with
      normal ranges, anomalies) grounded in the device's docs / a referenced file.
-  3. build_dataset(): deterministic synthesis expands the spec into a full
+     Missing facts raise ClarificationNeeded so the conversation can resume.
+  2. build_dataset(): deterministic synthesis expands the spec into a full
      FleetDataset (healthy history + replay with injected anomalies) that the
      Analysis engine loads, updating its asset/metric selectors.
 
@@ -20,9 +20,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from device_grounding import SOURCE_ONLY, verify_quote, verify_unit
+from device_grounding import ClarificationNeeded, SOURCE_ONLY, generate_grounded, verify_passages, verify_quote
 from fleet_data import FleetAsset, FleetDataset, Reading
-from gemini_client import generate_json, generate_text, is_live
+from gemini_client import generate_json, is_live
 
 _ANOMALY_CODE = {"spike": "OVERLOAD_ALARM", "sag": "VOLT_SAG", "drift": "THD_HIGH", "dropout": "LOAD_LOST"}
 # Map an anomaly kind to the PRISM ground-truth fault type (for accuracy scoring).
@@ -35,7 +35,8 @@ class MetricSpec(BaseModel):
     unit: str = Field(default="", description="Source-defined unit; empty only for a documented dimensionless metric")
     normal_min: float = Field(description="Typical minimum healthy value")
     normal_max: float = Field(description="Typical maximum healthy value")
-    evidence: str = Field(default="", description="Exact supplied passage containing the metric name, unit and range")
+    evidence: str = Field(default="", description="Copy exact words from a user's reply or supplied source; user guidance itself is evidence, without invented prefixes")
+    evidence_passages: list[str] = Field(default_factory=list, description="Additional exact passages when name, unit and range occur separately")
 
     @model_validator(mode="after")
     def valid_range(self):
@@ -88,30 +89,25 @@ class DatasetSpec(BaseModel):
 
 class DatasetDraft(BaseModel):
     spec: DatasetSpec | None = None
-    missing_details: list[str] = Field(default_factory=list)
-
-
-def clarifying_questions(device_context: str, request: str, reference: str = "") -> str:
-    prompt = (
-        f"{SOURCE_ONLY}\n"
-        "A user wants to generate a synthetic dataset for a monitored device. Before generating, ask 3-6 "
-        "concise clarifying questions that would materially change the dataset (parameters to include, "
-        "units/ranges, duration and sampling, which anomalies to inject, number of assets). Ask only "
-        "questions; do not generate data yet. Use the context to avoid asking what is already known.\n\n"
-        f"Device context:\n{device_context[:8000]}\n\n"
-        f"Referenced parameter file (optional):\n{reference[:8000]}\n\n"
-        f"User request: {request}"
-    )
-    return generate_text(prompt, temperature=0.3)
+    missing_details: list[str] = Field(default_factory=list, description="Only missing device facts; do not ask for document quotes when explicit user guidance supplies the values")
+    answer: str = Field(default="", description="Brief useful response in plain language, without schema or validation jargon")
 
 
 _SCHEMA_HINT = (
     "Return a DatasetDraft with spec set to the proposed DatasetSpec, or spec=null and "
     "missing_details containing specific questions. Use profile=independent. "
-    "Each metric requires an exact supplied evidence passage containing "
-    "its original name, unit and numeric range. Empty units require explicit dimensionless guidance. "
+    "Explicit user guidance/answers are authoritative supplied sources for this task, just like docs/code. "
+    "No separate document is required to reconfirm facts the user supplied. Copy the user's words as evidence. "
+    "Each metric requires exact supplied evidence for its original name, unit and numeric range. "
+    "Use evidence_passages when these facts are in different documents or user replies; they need not "
+    "occur in one sentence. Copy the passages yourself; never ask the user to format citations. "
+    "Empty units require explicit dimensionless guidance. "
     "Use asset type GENERIC and criticality unknown unless explicitly documented. "
-    "If necessary details are missing, do not produce a dataset. "
+    "If necessary details are missing, answer with what is already known and ask at most 3 concise, "
+    "plain-language questions about the next missing facts. Never use words like DatasetSpec, normal_min, "
+    "normal_max, spec or profile in the user-facing answer or questions. Do not list schema field names, profile names "
+    "or demands for exact passages. Do not re-ask settings already selected in the UI or answered in conversation. "
+    "If ranges are unavailable, ask the user to supply illustrative synthetic ranges or attach a source. "
     "Do not infer physical relationships or translate unknown event codes into fault meanings."
     " Do not repeat assets or metrics; match the user's requested asset count exactly."
 )
@@ -123,34 +119,51 @@ def generate_spec(device_context: str, request: str, reference: str = "", answer
     prompt = (
         f"{SOURCE_ONLY}\n"
         "Design a COMPACT dataset specification (not the data itself) for a synthetic dataset of the "
-        "monitored device. Choose realistic metrics with normal_min/normal_max ranges and units, grounded "
+        "monitored device. Select only supplied metrics, ranges and units, grounded "
         "in the context and referenced parameter list. Include only synthetic anomalies requested by "
         "the user. Ask for missing metrics, units, ranges, assets or sampling details. "
         "Explicit user-selected synthetic sampling governs this dataset only; it does not change "
         "the actual device's live polling configuration.\n\n"
         f"{_SCHEMA_HINT}\n\n"
-        f"Device context:\n{device_context[:8000]}\n\n"
-        f"Referenced parameter file (optional, authoritative for names/IDs/units):\n{reference[:12000]}\n\n"
+        f"Device context:\n{device_context[:60000]}\n\n"
+        f"Referenced parameter file (optional, authoritative for names/IDs/units):\n{reference[:120000]}\n\n"
         f"User request: {request}\n\n"
         f"User answers to clarifying questions (if any): {answers}"
     )
-    draft = DatasetDraft.model_validate(generate_json(prompt, DatasetDraft, max_output_tokens=16384))
+    supplied = "\n".join((device_context, reference, request, answers))
+    return generate_grounded(generate_json, prompt, DatasetDraft, lambda raw: _validate_draft(raw, supplied))
+
+
+def _validate_draft(raw: dict, supplied: str) -> dict:
+    draft = DatasetDraft.model_validate(raw)
     if draft.missing_details or draft.spec is None:
-        raise ValueError("Provide missing dataset details: " + "; ".join(
-            draft.missing_details or ["documented metrics, units, ranges, assets and sampling details"]))
+        raise ClarificationNeeded(draft.missing_details or [
+            "Which metrics should I include, and what units and illustrative numeric ranges should I use?"
+        ], answer=draft.answer)
     spec = draft.spec
     if spec.profile != "independent":
         raise ValueError("The power-demo profile is reserved for explicitly selected demonstration fixtures.")
-    supplied = "\n".join((device_context, reference, request, answers))
+    questions = []
     for asset in spec.assets:
         for metric in asset.metrics:
-            verify_unit(metric.unit, metric.evidence)
-            verify_quote(metric.evidence, supplied,
-                         [metric.name, metric.unit, metric.normal_min, metric.normal_max])
+            try:
+                verify_passages(metric.evidence, metric.evidence_passages, supplied,
+                                [metric.name, metric.unit, metric.normal_min, metric.normal_max], unit=metric.unit)
+            except ValueError:
+                questions.append(f"I couldn't verify the supplied evidence for **{metric.name}**. "
+                                 "What unit and illustrative minimum/maximum should I use, or which device source documents them?")
         if asset.type != "GENERIC":
-            verify_quote(asset.type, supplied, [])
+            try:
+                verify_quote(asset.type, supplied, [])
+            except ValueError:
+                questions.append(f"What documented device type should I use for **{asset.id}**?")
         if asset.criticality != "unknown":
-            verify_quote(asset.criticality, supplied, [])
+            try:
+                verify_quote(asset.criticality, supplied, [])
+            except ValueError:
+                questions.append(f"What criticality is confirmed for **{asset.id}**, or should I leave it unknown?")
+    if questions:
+        raise ClarificationNeeded(questions, answer=draft.answer, repairable=True)
     return spec.model_dump()
 
 

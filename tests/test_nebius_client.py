@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
 from unittest.mock import Mock, patch
@@ -60,6 +61,30 @@ class NebiusClientTests(unittest.TestCase):
         }, clear=True), patch("gemini_client.requests.post", return_value=response):
             with self.assertRaisesRegex(ModelUnavailable, "required response schema"):
                 generate_json("Brief these public sources.", SampleAnswer)
+
+    def test_generation_can_repair_invalid_schema_once_without_weakening_validation(self):
+        from dataset_gen import DatasetDraft
+
+        asset = {"id": "A", "metrics": [{"name": "x", "unit": "mm", "normal_min": 1, "normal_max": 2}]}
+        invalid = json.dumps({"spec": {"assets": [asset, asset]}})
+        corrected = json.dumps({"spec": {"assets": [asset]}})
+        with patch.dict(os.environ, {
+            "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
+        }, clear=True), patch("gemini_client._nebius_generate_text", side_effect=[invalid, corrected]) as model:
+            result = generate_json("One synthetic asset.", DatasetDraft, repair_schema=True)
+        self.assertEqual(len(result["spec"]["assets"]), 1)
+        self.assertEqual(model.call_count, 2)
+        self.assertIn("Asset IDs must be unique", model.call_args.args[0])
+        self.assertIn("previous output is not evidence", model.call_args.args[0])
+        self.assertIs(model.call_args.kwargs["schema"], DatasetDraft)
+
+    def test_schema_repair_stops_after_one_attempt_and_reports_failure(self):
+        with patch.dict(os.environ, {
+            "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
+        }, clear=True), patch("gemini_client._nebius_generate_text", return_value="{}") as model:
+            with self.assertRaises(ModelUnavailable):
+                generate_json("Answer.", SampleAnswer, repair_schema=True)
+        self.assertEqual(model.call_count, 2)
 
     def test_rejected_schema_does_not_fall_back_to_unconstrained_output(self):
         response = Mock(ok=False, status_code=400)

@@ -11,6 +11,7 @@ netsetup.configure_tls()
 
 import auth
 import devices
+import specta_ui
 import ui_common
 from views import (analysis, chat, data_sources, device_manager, integrations,
                    live_monitoring, public_research, simulate, user_admin)
@@ -92,9 +93,14 @@ def main() -> None:
     _maybe_seed_demo()
     if not ui_common.current_user():
         ui_common.login_view()
+        specta_ui.mount_dock()
         return
     ui_common.sidebar_account()
-    _build_navigation(ui_common.current_role()).run()
+    page = _build_navigation(ui_common.current_role())
+    st.session_state["specta_page"] = page.title
+    # Mount before pages that may stop early when no device/source is selected.
+    specta_ui.mount_dock()
+    page.run()
 
 
 main()

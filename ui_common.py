@@ -86,6 +86,12 @@ def sidebar_account() -> None:
         st.caption(f"Embeddings: `{embedding_backend()}`")
 
 
+def _share_device_selection(widget_key: str) -> None:
+    selected = st.session_state.get(widget_key)
+    if selected:
+        st.session_state["specta_selected_device"] = selected
+
+
 def device_selector(key: str = "active_device") -> dict | None:
     """Shared device picker; remembers the selection across pages."""
     all_devices = devices.list_devices()
@@ -96,7 +102,9 @@ def device_selector(key: str = "active_device") -> dict | None:
     ids = list(labels)
     current = st.session_state.get(key)
     index = ids.index(current) if current in ids else None
-    chosen = st.selectbox("Device", ids, index=index, format_func=lambda i: labels[i], key=f"{key}_select")
+    widget_key = f"{key}_select"
+    chosen = st.selectbox("Device", ids, index=index, format_func=lambda i: labels[i], key=widget_key,
+                          on_change=_share_device_selection, args=(widget_key,))
     st.session_state[key] = chosen
     if chosen is None:
         st.info("Select your device, or explicitly select the synthetic demo. Demo knowledge is not used for other devices.")
