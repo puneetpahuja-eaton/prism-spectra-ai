@@ -11,7 +11,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from gemini_client import ModelUnavailable, generate_json
+from nebius_client import ModelUnavailable, generate_json
 from integrations.tavily import Client, TavilyUnavailable
 
 _REVIEW = "Public research only. Applicability is unverified; qualified engineer review is required. No equipment command or safety-policy change."

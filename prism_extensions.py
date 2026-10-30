@@ -12,10 +12,12 @@ from google.auth.exceptions import GoogleAuthError
 import bq
 import auth
 from fleet_data import FleetAsset, FleetDataset, Reading, csv_template
-from gemini_client import backend, is_live
+from nebius_client import backend, is_live
 from prism_cloud import Engine, replacement
 import storage
 import ui_common
+import research_ui
+import workflow
 
 CLOUD_ERRORS = (GoogleAPICallError, GoogleAuthError, RuntimeError, ValueError, OSError, TimeoutError)
 
@@ -51,7 +53,7 @@ def tick(engine: Engine) -> None:
 
 def sidebar(engine: Engine) -> None:
     with st.sidebar:
-        with st.expander("Google Cloud & data source", expanded=False, key="prism_cloud_panel"):
+        with st.expander("Hosting & data source", expanded=False, key="prism_cloud_panel"):
             st.toggle("Explicit offline simulation", value=engine.offline, key="prism_offline", on_change=_mode_changed)
             st.write("Reasoning:", "offline rules (not a model call)" if engine.offline else backend())
             st.write("Documents & scenarios:", storage.backend())
@@ -160,6 +162,10 @@ def case_panel(engine: Engine, case) -> None:
     if detail.get("work_order"):
         st.markdown("**Review-only work-order draft (not dispatched):**")
         st.json(detail["work_order"], expanded=False)
+    if detail.get("ai_status") == "pending":
+        st.info("Nebius interpretation is pending; observations continue.")
+    if detail.get("workflow"):
+        workflow.show_report(detail["workflow"], key=f"case_workflow_{engine.run_id}_{case.case_id}")
     if auth.can_operate(ui_common.current_role()):
         if st.button("Research public guidance for this case", key=f"public_research_{case.case_id}"):
             st.session_state["research_case_context"] = {
@@ -168,6 +174,11 @@ def case_panel(engine: Engine, case) -> None:
             }
             st.info("Open Public Research in the sidebar. Enter and review public product/fault terms there; "
                     "this case's private details are not automatically sent.")
+        if engine.device_id:
+            evidence = [{"text": json.dumps(detail.get("evidence", {}))}] + detail.get("sources", [])
+            research_ui.render(engine.device_id, f"{engine.run_id}:{case.case_id}", surface="case",
+                               device_evidence=evidence,
+                               on_result=lambda packet: engine.cloud_cases[case.case_id].update(public_research=packet))
     if detail.get("public_research"):
         packet = detail["public_research"]
         st.caption(f"Public research attached: {packet['id']} ({packet['status']}). "

@@ -154,13 +154,13 @@ class IngestionTests(PlatformTestBase):
 
 
 class RagTests(PlatformTestBase):
-    def test_offline_answer_is_grounded_and_labeled(self):
+    def test_missing_model_is_explicit_not_a_local_answer(self):
         device = devices.create_device(name="Meter", type="METER")
         ingest.ingest_text(device["id"], name="doc", kind="document",
                            text="Harmonic distortion above the THD limit is mitigated by the active filter. " * 40)
         result = rag.answer(device["id"], "how is harmonic distortion handled?")
-        self.assertTrue(result["grounded"])
-        self.assertIn("Offline", result["answer"])
+        self.assertFalse(result["grounded"])
+        self.assertIn("no local model answer", result["answer"])
         self.assertTrue(result["sources"])
 
     def test_history_is_accepted_and_formatted(self):
@@ -171,9 +171,10 @@ class RagTests(PlatformTestBase):
         self.assertIn("Assistant: 200 waveforms.", formatted)
         device = devices.create_device(name="Meter", type="METER")
         ingest.ingest_text(device["id"], name="doc", kind="document", text="voltage sag info " * 40)
-        # Offline answer should still work when history is passed.
+        # History remains accepted even when remote interpretation is unavailable.
         result = rag.answer(device["id"], "and the voltage?", history=history)
-        self.assertTrue(result["grounded"])
+        self.assertFalse(result["grounded"])
+        self.assertEqual(result["backend"], "unavailable")
 
     def test_no_corpus_returns_guidance(self):
         device = devices.create_device(name="Empty", type="METER")
@@ -531,7 +532,7 @@ class InferenceAndIntegrationParsers(PlatformTestBase):
     def test_offline_field_map_reports_unavailable_without_heuristic(self):
         device = devices.create_device(name="M", type="METER")
         sample = json.dumps({"data": {"voltage_v": 480, "current_a": 12.0, "note": "x"}})
-        from gemini_client import ModelUnavailable
+        from nebius_client import ModelUnavailable
         with self.assertRaises(ModelUnavailable):
             suggest_field_map(device["id"], sample)
 
@@ -780,7 +781,8 @@ class LiveEngineTests(PlatformTestBase):
         summary = eng.summary()
         self.assertGreaterEqual(summary["total_cases"], 1)
         audit = eng.audit()
-        self.assertTrue(any(c["fault_type"] == "VOLTAGE_SAG" for c in audit["cases"]))
+        self.assertTrue(all(c["fault_type"] == "UNCLASSIFIED" for c in audit["cases"]))
+        self.assertTrue(all(c["decision"] == "ESCALATE" for c in audit["cases"]))
 
     def test_live_engine_carries_forward_missing_metric(self):
         import datetime

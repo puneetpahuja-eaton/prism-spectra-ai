@@ -16,6 +16,7 @@ import ingest
 import knowledge
 import monitor_gen
 import rag
+import workflow
 from device_grounding import ClarificationNeeded
 
 TaskKind = Literal["dataset", "monitor"]
@@ -42,6 +43,8 @@ class Conversation:
     task: Task | None = None
     attachments: list[dict[str, str]] = field(default_factory=list)
     mode: str = "agent"
+    id: str = field(default_factory=lambda: uuid4().hex)
+    public_evidence: dict | None = None
 
 
 def begin_task(conversation: Conversation, kind: TaskKind, request: str, *,
@@ -177,6 +180,17 @@ def _run_task(conversation: Conversation, notify: Callable[[str], None]) -> dict
 def respond(conversation: Conversation, message: str, *, mode: str = "agent",
             page_context: str = "", notify: Callable[[str], None] | None = None,
             start_task: bool = False, role: str = "user") -> dict:
+    with workflow.Workflow("specta") as run:
+        result = workflow.run_step("specta", lambda: _respond(
+            conversation, message, mode=mode, page_context=page_context,
+            notify=notify, start_task=start_task, role=role))
+    result["workflow"] = run.report
+    return result
+
+
+def _respond(conversation: Conversation, message: str, *, mode: str = "agent",
+             page_context: str = "", notify: Callable[[str], None] | None = None,
+             start_task: bool = False, role: str = "user") -> dict:
     """Always retain a user-visible reply, including clarifications and failures."""
     notify = notify or (lambda _: None)
     message = message.strip()
@@ -199,7 +213,8 @@ def respond(conversation: Conversation, message: str, *, mode: str = "agent",
             attached = "\n\n".join(f"Attached source {a['name']}:\n{a['text']}" for a in conversation.attachments)
             response = rag.converse(
                 conversation.device_id, message, mode=mode, screen_context=page_context,
-                role=role, history=conversation.messages[:-1], attached_context=attached)
+                role=role, history=conversation.messages[:-1], attached_context=attached,
+                public_packet=conversation.public_evidence)
             task_kind = response.get("task", "chat")
             if task_kind in ("dataset", "monitor") and mode == "agent" and not response.get("needs_clarification"):
                 begin_task(conversation, task_kind, message, asset_count=response.get("asset_count") or 1)

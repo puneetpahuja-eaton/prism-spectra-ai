@@ -12,7 +12,7 @@ import requests
 from streamlit.testing.v1 import AppTest
 
 import devices
-from gemini_client import ModelUnavailable
+from nebius_client import ModelUnavailable
 from integrations.tavily import Client, TavilyUnavailable
 import public_research as research
 

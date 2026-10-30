@@ -10,7 +10,7 @@ import device_data
 import devices
 from device_grounding import verify_quote
 from fleet_data import FleetAsset, FleetDataset, Reading
-from gemini_client import ModelUnavailable
+from nebius_client import ModelUnavailable
 from live.inference import suggest_field_map
 from live.monitor import LiveMonitor
 from live.rest_adapter import poll

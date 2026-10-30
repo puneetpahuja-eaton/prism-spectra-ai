@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 import bq
 import storage
-from gemini_client import backend, is_live
+from nebius_client import backend, is_live
 from models import Incident
 from orchestrator import approve_simulation, load_scenarios, load_sop, run_case
 

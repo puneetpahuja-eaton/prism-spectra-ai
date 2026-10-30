@@ -11,7 +11,7 @@ import json
 from pydantic import BaseModel, Field
 
 import rag
-from gemini_client import ModelUnavailable, generate_json, is_live
+from nebius_client import ModelUnavailable, generate_json, is_live
 from device_grounding import SOURCE_ONLY
 
 

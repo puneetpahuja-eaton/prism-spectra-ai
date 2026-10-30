@@ -9,7 +9,9 @@ import streamlit as st
 import devices
 import specta
 import ui_common
-from gemini_client import backend as model_backend
+import research_ui
+import workflow
+from nebius_client import backend as model_backend
 
 _STYLE = """
 <style>
@@ -205,6 +207,8 @@ def _render_message(conv: specta.Conversation, message: dict, key: str) -> None:
         if message.get("plan"):
             _monitor_actions(conv, message, key)
         if message["role"] == "assistant":
+            if message.get("workflow"):
+                workflow.show_report(message["workflow"], key=f"{key}_workflow")
             st.download_button("Save response", message["content"], "specta-response.md", "text/markdown",
                                key=f"{key}_response", on_click="ignore", type="tertiary",
                                icon=":material/content_copy:", help="Save this response; use code-block Copy for code.")
@@ -271,8 +275,14 @@ def chat_surface(surface: str) -> None:
                         "dataset or monitoring plan. If facts are missing, I'll ask here and continue from your reply.")
         for index, message in enumerate(conv.messages):
             _render_message(conv, message, f"specta_{surface}_{conv.device_id}_{index}")
-    st.caption("Device sources + your guidance only. Attach authorized files; they are sent to the configured AI provider. "
-               "No automatic public web search.")
+        def remember_public(packet: dict) -> None:
+            conv.public_evidence = packet
+        evidence = [{"text": a["text"]} for a in conv.attachments]
+        # Research gets its own approval and never contributes facts to generation tools.
+        research_ui.render(conv.device_id, f"chat:{conv.id}", surface=surface,
+                           device_evidence=evidence, on_result=remember_public)
+    st.caption("Device sources + your guidance; explicitly approved public evidence is supplementary to chat only. "
+               "Attach authorized files; they are sent to Nebius. No automatic public web search.")
     if conv.attachments:
         st.caption("Attached: " + ", ".join(a["name"] for a in conv.attachments))
     value = st.chat_input("Reply to continue..." if conv.task else "Ask Specta or describe a task...",

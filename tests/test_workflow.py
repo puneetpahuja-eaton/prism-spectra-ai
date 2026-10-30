@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from diagnostician import offline_diagnose, validate_diagnosis
 from evidence import build_evidence, robust_z
-from gemini_client import ModelUnavailable
+from nebius_client import ModelUnavailable
 from orchestrator import approve_simulation, run_case
 from verifier import verify
 import bq

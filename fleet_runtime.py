@@ -7,9 +7,9 @@ from collections.abc import Callable
 import uuid
 
 from fleet_data import BENIGN_CODES, PROPAGATING_CODES, FleetDataset, Reading
-from fleet_models import LearnedDetectors
+from fleet_models import BaselineDetectors
 from fleet_playbook import lookup_playbook
-from gemini_client import backend as model_backend
+from nebius_client import backend as model_backend
 from orchestrator import run_case
 
 
@@ -22,7 +22,7 @@ class FleetEngine:
         self.evaluation_scenarios = [dict(row) for row in evaluation_scenarios or []]
         self.run_id = str(uuid.uuid4())
         self.assets = {asset.id: asset for asset in self.data.assets}
-        self.detectors = LearnedDetectors(self.data)
+        self.detectors = BaselineDetectors(self.data)
         frames: dict = defaultdict(dict)
         for reading in self.data.telemetry:
             frames[reading.timestamp][reading.asset_id] = reading
@@ -41,7 +41,7 @@ class FleetEngine:
             "history_rows": len(data.history), "assets": len(data.assets),
             "history_end": max(row.timestamp for row in data.history).isoformat(),
             "replay_start": self.frames[0][0].isoformat(),
-            "models": ["median/MAD", "IsolationForest corroboration", "Mahalanobis diagnostic", "Markov event transitions"],
+            "models": ["deterministic median/MAD", "Mahalanobis arithmetic", "explicit demo code membership"],
         })
 
     @property
@@ -307,8 +307,8 @@ class FleetEngine:
         return [{"asset_id": asset_id, "history_rows": len(state["rows"]),
                  "features": ", ".join(state["features"]),
                  "history_end": state["rows"][-1].timestamp.isoformat(),
-                 "Markov_transitions_learned": sum(self.detectors.transitions.values()),
-                 "Markov_vocabulary": len(self.detectors.vocabulary),
+                 "code_transitions_learned": 0,
+                 "baseline_code_vocabulary": len(self.detectors.vocabulary),
                  "mahalanobis_limit": round(state["maha_limit"], 3)}
                 for asset_id, state in self.detectors.states.items()]
 

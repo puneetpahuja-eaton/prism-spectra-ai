@@ -16,7 +16,7 @@ import devices
 import monitor_gen
 import specta
 from device_grounding import ClarificationNeeded, verify_passages
-from gemini_client import ModelUnavailable
+from nebius_client import ModelUnavailable
 from prism_cloud import Engine
 from tests.test_platform import PlatformTestBase
 
@@ -129,8 +129,8 @@ class SpectaTests(PlatformTestBase):
             "AI_PROVIDER": "nebius", "FORCE_MOCK": "0", "NEBIUS_API_KEY": "test-key",
             "NEBIUS_TIMEOUT_SECONDS": "120",
         }), patch("specta.rag.retrieve", return_value=[]), \
-                patch("gemini_client.netsetup.configure_tls"), \
-                patch("gemini_client.requests.post", side_effect=requests.exceptions.ReadTimeout) as post:
+                patch("nebius_client.netsetup.configure_tls"), \
+                patch("nebius_client.requests.post", side_effect=requests.exceptions.ReadTimeout) as post:
             response = specta.respond(self.conv, "Generate data", start_task=True)
         self.assertEqual(response["status"], "error")
         self.assertIn("120-second read timeout", response["content"])

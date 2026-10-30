@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, create_model, model_validator
 
 from device_grounding import ClarificationNeeded, SOURCE_ONLY, generate_grounded, verify_passages, verify_quote
 from fleet_data import FleetAsset, FleetDataset, Reading
-from gemini_client import generate_json, is_live
+from nebius_client import generate_json, is_live
 
 _ANOMALY_CODE = {"spike": "OVERLOAD_ALARM", "sag": "VOLT_SAG", "drift": "THD_HIGH", "dropout": "LOAD_LOST"}
 # Map an anomaly kind to the PRISM ground-truth fault type (for accuracy scoring).

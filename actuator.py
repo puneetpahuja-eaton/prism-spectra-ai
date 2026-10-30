@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from diagnostician import sop_sections
-from gemini_client import generate_json
+from nebius_client import generate_json
 from models import WorkOrder
 
 

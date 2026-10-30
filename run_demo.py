@@ -9,7 +9,7 @@ from pathlib import Path
 
 from diagnostician import diagnose
 from evidence import build_evidence
-from gemini_client import backend, is_live
+from nebius_client import backend, is_live
 
 HERE = Path(__file__).parent
 

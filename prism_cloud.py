@@ -18,7 +18,7 @@ from prism import config
 from prism.agent_runtime import Blackboard
 from prism.agents.actuator import ActuatorAgent
 from prism.agents.decider import DeciderAgent
-from prism.models import CodePatternModel, MetricAnomalyModel
+from observation_stats import CodeMembership, MetricStatistics
 from prism.case import Case, Observation
 from prism.orchestrator import Engine as ReferenceEngine
 from prism.signals import SignalSource
@@ -27,9 +27,11 @@ from prism.topology import Asset, Topology
 from actuator import act
 from diagnostician import diagnose
 from fleet_data import FleetDataset, load_bundle, load_csv
-from gemini_client import is_live
+from nebius_client import is_live
 from orchestrator import MODEL_FAILURES
 import storage
+import jobs
+import workflow
 
 
 def load_topology(text: str) -> Topology:
@@ -62,6 +64,23 @@ def load_topology(text: str) -> Topology:
         if asset.parent_id:
             assets[asset.parent_id].children.append(asset.asset_id)
     return Topology(assets)
+
+
+def assess_device(device_id: str | None, evidence: dict) -> dict:
+    import rag
+
+    with workflow.Workflow("diagnosis") as run:
+        chunks = rag.retrieve(device_id, json.dumps(evidence), top_k=10) if device_id else []
+        detail = {"evidence": evidence, "diagnosis": None, "work_order": None, "errors": [],
+                  "sources": [{"name": c.get("source_name", "source"), "text": c.get("text", "")} for c in chunks]}
+        if not chunks:
+            detail["errors"].append("Insufficient supplied evidence. Add this device's sources; no diagnosis was invented.")
+        else:
+            sop = "\n\n".join(f"## SOP-{index}\nSource: {c.get('source_name', 'source')}\n{c.get('text', '')}"
+                             for index, c in enumerate(chunks, 1))
+            detail["diagnosis"] = workflow.run_step("diagnosis", lambda: diagnose(evidence, sop, device_only=True))
+    detail["workflow"] = run.report
+    return detail
 
 
 class CloudBlackboard(Blackboard):
@@ -137,8 +156,9 @@ class ReplaySource:
 
 class Engine(ReferenceEngine):
     def __init__(self, *, offline: bool | None = None, dataset: FleetDataset | None = None,
-                 device_id: str | None = None, demo_profile: bool = False):
+                 device_id: str | None = None, demo_profile: bool = False, defer_ai: bool = False):
         self.offline = not is_live() if offline is None else offline
+        self.defer_ai = defer_ai
         self.source = "uploaded" if dataset is not None else "synthetic"
         self.device_id = device_id
         self.demo_profile = dataset is None or demo_profile
@@ -172,8 +192,8 @@ class Engine(ReferenceEngine):
                                if s.get("asset_id") in self.topo.assets and s.get("fault_type") in config.PLAYBOOK]
             self.labeled = bool(self._scenarios)
             self.total_samples = len(self.signal.frames)
-        self.metric_model = MetricAnomalyModel()
-        self.code_model = CodePatternModel()
+        self.metric_model = MetricStatistics()
+        self.code_model = CodeMembership()
         self.train_report = {}
         self.train()
         self.reset()
@@ -213,6 +233,10 @@ class Engine(ReferenceEngine):
 
     def train(self) -> None:
         super().train()
+        self.train_report.update(
+            metric_algorithms=["Deterministic median/MAD deviation (not a learned model)"],
+            code_algorithm="Baseline code membership; no learned transition model",
+            code_transitions_learned=0)
         if self.dataset is not None:
             counts = [sum(row.asset_id == asset.id for row in self.dataset.history) for asset in self.dataset.assets]
             timestamps = sorted({row.timestamp for row in self.dataset.history})
@@ -224,6 +248,9 @@ class Engine(ReferenceEngine):
             self.train_report["code_vocabulary"] = len({c for row in self.dataset.history for c in row.event_codes})
 
     def reset(self) -> None:
+        for future in getattr(self, "_pending_ai", {}).values():
+            future.cancel()
+        self._pending_ai = {}
         super().reset()
         self.run_id = str(uuid.uuid4())
         self.cloud_cases = {}
@@ -284,7 +311,7 @@ class Engine(ReferenceEngine):
         evidence["anomalous_metrics"] = [signal["metric"] for signal in evidence["signals"] if signal["anomalous"]]
         detail = {"evidence": evidence, "errors": [], "work_order": None}
         self.cloud_cases[case.case_id] = detail
-        bb.record_tool("Diagnostician", "gemini_grounded_diagnosis", asset.asset_id,
+        bb.record_tool("Diagnostician", "nebius_grounded_diagnosis", asset.asset_id,
                        "Started explicit offline explanation" if self.offline else "Started configured model request; waiting for validated output")
         try:
             diagnosis = diagnose(evidence, self.sop, offline=self.offline)
@@ -296,12 +323,12 @@ class Engine(ReferenceEngine):
             # classification/confidence. Missing grounding is not accepted as success.
             if diagnosis["insufficient_evidence"]:
                 case.decision = "ESCALATE"
-                case.decision_reason = "Google/offline SOP assessment reports insufficient evidence; engineer review required."
+                case.decision_reason = "Source assessment reports insufficient evidence; engineer review required."
             if case.decision == "ESCALATE":
-                bb.record_tool("Actuator", "gemini_work_order", case.case_id, "Preparing review-only work-order draft")
+                bb.record_tool("Actuator", "nebius_work_order", case.case_id, "Preparing review-only work-order draft")
                 output = act(evidence, diagnosis, {"action": "escalate"}, self.sop, offline=self.offline)
                 detail["work_order"] = output["work_order"]
-                bb.record_tool("Actuator", "gemini_work_order", case.case_id, output["work_order"]["_source"])
+                bb.record_tool("Actuator", "nebius_work_order", case.case_id, output["work_order"]["_source"])
         except MODEL_FAILURES as error:
             detail["errors"].append(f"{type(error).__name__}: {error}")
             case.decision = "ESCALATE"
@@ -310,6 +337,7 @@ class Engine(ReferenceEngine):
             bb.log("Diagnostician", case.case_id, case.decision_reason, "escalate")
 
     def tick(self, on_event=None) -> None:
+        self.drain_ai()
         if self.at_end:
             return
         self.on_event = on_event
@@ -371,8 +399,6 @@ class Engine(ReferenceEngine):
                                 "Draft retained locally; no command or ticket sent")
 
     def _enrich_device(self, case, reading: dict, score: dict) -> None:
-        import rag
-
         evidence = {"asset_id": case.root_asset_id, "metrics": reading["metrics"],
                     "event_codes": reading["codes"], "statistical_score": score,
                     "source": "selected-device telemetry", "equipment_commands_sent": False}
@@ -384,22 +410,39 @@ class Engine(ReferenceEngine):
             detail["errors"].append("Model interpretation not enabled; device observations remain unclassified.")
             return
         try:
-            chunks = rag.retrieve(self.device_id, json.dumps(evidence), top_k=10) if self.device_id else []
-            detail["sources"] = [{"name": c.get("source_name", "source"), "text": c.get("text", "")}
-                                 for c in chunks]
-            if not chunks:
-                detail["errors"].append("Insufficient evidence: add this device's sources and enable the model for interpretation.")
+            if self.defer_ai:
+                if len(self._pending_ai) >= 4:
+                    raise RuntimeError("This device already has four pending interpretations. Observations continue; review this case manually.")
+                self._pending_ai[case.case_id] = jobs.submit(lambda: assess_device(self.device_id, evidence))
+                detail["ai_status"] = "pending"
                 return
-            sop = "\n\n".join(f"## SOP-{index}\nSource: {c.get('source_name', 'source')}\n{c.get('text', '')}"
-                             for index, c in enumerate(chunks, 1))
-            result = diagnose(evidence, sop, device_only=True)
-            detail["diagnosis"] = result
-            case.confidence = result["confidence"]
-            self.bb.record_tool("Diagnostician", "validate_source_citations", case.case_id,
-                                result["_citation_check"])
+            self._accept_assessment(case, assess_device(self.device_id, evidence))
         except MODEL_FAILURES as error:
             detail["errors"].append(f"{type(error).__name__}: {error}")
             self.bb.record_tool("Diagnostician", "source_analysis_failed", case.case_id, str(error))
+
+    def _accept_assessment(self, case, detail: dict) -> None:
+        self.cloud_cases[case.case_id].update(detail)
+        self.cloud_cases[case.case_id]["ai_status"] = "complete" if detail.get("diagnosis") else "unavailable"
+        if detail.get("diagnosis"):
+            case.confidence = detail["diagnosis"]["confidence"]
+            self.bb.record_tool("Diagnostician", "validate_source_citations", case.case_id,
+                                detail["diagnosis"]["_citation_check"])
+
+    def drain_ai(self) -> None:
+        for case_id, future in list(getattr(self, "_pending_ai", {}).items()):
+            if not future.done():
+                continue
+            self._pending_ai.pop(case_id)
+            case = next((c for c in self.cases if c.case_id == case_id), None)
+            if case is None:
+                continue
+            try:
+                self._accept_assessment(case, future.result())
+            except MODEL_FAILURES as error:
+                self.cloud_cases[case_id]["ai_status"] = "failed"
+                self.cloud_cases[case_id]["errors"].append(f"AI interpretation failed: {error}")
+                self.bb.record_tool("Diagnostician", "source_analysis_failed", case_id, type(error).__name__)
 
     def summary(self) -> dict:
         result = super().summary()

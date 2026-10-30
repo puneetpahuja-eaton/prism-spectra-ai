@@ -8,7 +8,7 @@ import runpy
 import streamlit as st
 
 import device_data
-from gemini_client import is_live
+from nebius_client import is_live
 from prism_cloud import Engine
 import prism_extensions as cloud
 import ui_common
@@ -65,6 +65,9 @@ def render() -> None:
     st.caption(f"Device: **{device['name']}** · mode: **{device_data.mode(device_id)}**")
     if device_data.uses_demo_profile(device_id):
         st.warning("Explicit synthetic power demo: fixture specifications and playbooks are not evidence about your device.")
+        st.info("The preserved reference dashboard's tutorial mentions historical learned models. "
+                "This runtime instead uses deterministic median/MAD deviation and baseline code membership, "
+                "with zero learned transitions. Detection scores and simulated outcomes may differ from the reference.")
     else:
         st.info("Source-only, observation-only analysis. Unknown event codes remain uninterpreted. "
                 "A statistical anomaly is not a physical diagnosis; no equipment actions or assumed savings.")

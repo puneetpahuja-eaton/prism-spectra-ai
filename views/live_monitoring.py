@@ -14,6 +14,8 @@ import rag
 import secretmgr
 import specta_ui
 import ui_common
+import research_ui
+from nebius_client import is_live
 from live import rest_adapter, sim_feed
 from live.inference import suggest_field_map
 from live.monitor import LiveMonitor
@@ -338,11 +340,12 @@ def render() -> None:
     on_key = f"live_on_{device_id}"
     st.session_state.setdefault(on_key, False)
     prism_key = f"live_prism_{device_id}"
-    deep = st.checkbox("🧠 Deep analysis (run the PRISM five-agent engine live)",
+    deep = st.checkbox("🧠 Deep analysis (authorize Nebius interpretation of incident evidence)",
                        value=st.session_state.get(f"live_deep_{device_id}", False),
                        key=f"live_deep_{device_id}",
-                       help="Warms up on a healthy baseline, then streams each poll through the same engine "
-                            "the Analysis page uses. Real devices use only their own sources; no demo playbooks.")
+                       help="Uses the baseline you confirm and sends selected-device sources and incident readings "
+                            "to Nebius in background jobs. Use only authorized, non-confidential data. "
+                            "No Tavily request runs without separate public-only consent.")
     baseline_confirmed = False
     if deep and not config.get("simulated"):
         baseline_confirmed = st.checkbox(
@@ -377,7 +380,7 @@ def render() -> None:
             from live_engine import LiveFleetEngine
             st.session_state[prism_key] = LiveFleetEngine(
                 asset_id=device["name"] or device_id, criticality=device["criticality"],
-                offline=bool(config.get("simulated")) or st.session_state.get("prism_offline", False),
+                offline=not is_live(),
                 device_id=device_id, asset_type=device["type"], demo_profile=bool(config.get("simulated")),
                 baseline_confirmed=baseline_confirmed)
         else:
@@ -426,18 +429,10 @@ def render() -> None:
                 st.session_state[on_key] = False
                 return
             new_issues = monitor.observe(reading)
-            # Enrich newly raised issues with a grounded description (once each).
+            # Interpretation is explicit and off the polling path.
             for issue in new_issues:
-                if config.get("simulated"):
-                    issue["description"] = "Synthetic demo observation, not a finding about the selected device."
-                    continue
-                try:
-                    issue["description"] = rag.describe_issue(
-                        device_id, param=issue.get("label") or issue["metric"], value=issue["value"],
-                        reason=issue.get("reason", "anomaly"), lower=issue.get("lower"),
-                        upper=issue.get("upper"))
-                except Exception as error:  # noqa: BLE001
-                    issue["description"] = f"(description unavailable: {error})"
+                issue["description"] = ("Synthetic observation. " if config.get("simulated") else "") + \
+                    "Review the incident evidence below. AI interpretation never changes polling limits or controls."
             st.session_state[hist_key].append({"timestamp": reading["timestamp"], **reading["metrics"]})
             st.session_state[hist_key] = st.session_state[hist_key][-120:]
             st.session_state[f"live_lastraw_{device_id}"] = reading.get("raw")
@@ -513,3 +508,61 @@ def render() -> None:
 
     with placeholder:
         live_panel()
+    _incident_review(device_id, prism_key, mon_key)
+
+
+def _incident_review(device_id: str, prism_key: str, mon_key: str) -> None:
+    import json
+    from prism_cloud import assess_device
+    import jobs
+
+    @st.fragment(run_every=2)
+    def review():
+        prism = st.session_state.get(prism_key)
+        engine = prism.engine if prism else None
+        if engine:
+            engine.drain_ai()
+            st.subheader("Incident evidence and AI review")
+            for case in engine.cases[-6:]:
+                with st.expander(case.case_id):
+                    from prism_extensions import case_panel
+                    case_panel(engine, case)
+            return
+        monitor = st.session_state.get(mon_key)
+        if not monitor or not monitor.issues:
+            return
+        st.subheader("Selected incident review")
+        # Object identity is session-local and changes on reset.
+        index = st.selectbox("Incident", list(range(len(monitor.issues))),
+                             format_func=lambda i: f"{i + 1}: {monitor.issues[i]['metric']}",
+                             key=f"incident_{device_id}_{id(monitor)}")
+        issue = monitor.issues[index]
+        future = issue.get("_ai_future")
+        if future and future.done():
+            issue.pop("_ai_future")
+            try:
+                issue["_assessment"] = future.result()
+            except (ValueError, RuntimeError, OSError) as error:
+                issue["_ai_error"] = f"Interpretation failed: {error}"
+        if st.button("Interpret selected incident with Nebius", disabled=not is_live() or bool(issue.get("_ai_future")),
+                     key=f"interpret_{device_id}_{id(monitor)}_{index}"):
+            evidence = {k: v for k, v in issue.items() if not k.startswith("_")}
+            try:
+                issue["_ai_future"] = jobs.submit(lambda: assess_device(device_id, evidence))
+            except RuntimeError as error:
+                issue["_ai_error"] = str(error)
+        if issue.get("_ai_future"):
+            st.info("Interpreting in the background; polling continues.")
+        if issue.get("_ai_error"):
+            st.error(issue["_ai_error"])
+        assessment = issue.get("_assessment", {})
+        if assessment:
+            st.json({k: v for k, v in assessment.items() if k != "workflow"}, expanded=False)
+            if assessment.get("workflow"):
+                import workflow
+                workflow.show_report(assessment["workflow"], key=f"live_trace_{device_id}_{id(monitor)}_{index}")
+        research_ui.render(device_id, f"live:{id(monitor)}:{index}", surface="live",
+                           device_evidence=[{"text": json.dumps({k: v for k, v in issue.items() if not k.startswith("_")})}]
+                                           + assessment.get("sources", []),
+                           on_result=lambda packet: issue.update(_public_research=packet))
+    review()

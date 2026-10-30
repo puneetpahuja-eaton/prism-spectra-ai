@@ -113,7 +113,7 @@ class LiveFleetEngine:
                            criticality=self.criticality.lower(), site="LIVE")
         dataset = FleetDataset(source="uploaded", assets=[asset], history=history, telemetry=[first])
         self.engine = Engine(offline=self.offline, dataset=dataset, device_id=self.device_id,
-                             demo_profile=self.demo_profile)
+                             demo_profile=False, defer_ai=True)
         # Live monitoring credits estimated early-detection value (accuracy stays n/a).
         self.engine.credit_value = self.demo_profile
         self.engine.tick()

@@ -15,7 +15,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 import rag
-from gemini_client import generate_json, is_live
+from nebius_client import generate_json, is_live
 from device_grounding import ClarificationNeeded, SOURCE_ONLY, generate_grounded, verify_passages, verify_quote
 from live.rest_adapter import _PARAM_URL
 

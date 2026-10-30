@@ -10,7 +10,7 @@ import datastore
 import devices
 import secretmgr
 from embeddings import backend as embedding_backend
-from gemini_client import backend as model_backend
+from nebius_client import backend as model_backend
 
 PAGE_TITLE = "Prism-Spectra-AI — Nebius x NVIDIA Reliability Copilot"
 
@@ -84,6 +84,9 @@ def sidebar_account() -> None:
         st.caption(f"Store: `{datastore.backend()}` · Secrets: `{secretmgr.backend()}`")
         st.caption(f"Model: `{model_backend()}`")
         st.caption(f"Embeddings: `{embedding_backend()}`")
+        import workflow
+        st.caption("Workflow: LangChain Core")
+        st.caption(f"LangSmith: {'metadata only' if workflow.tracing_enabled() else 'disabled'}")
 
 
 def _share_device_selection(widget_key: str) -> None:

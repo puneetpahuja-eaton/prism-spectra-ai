@@ -9,9 +9,10 @@ from pydantic import BaseModel, Field
 
 import datastore
 import devices
+import workflow
 from device_grounding import SOURCE_ONLY
 from embeddings import embed_text, backend as embed_backend
-from gemini_client import (ModelUnavailable, backend as model_backend, generate_json, generate_text, is_live)
+from nebius_client import (ModelUnavailable, backend as model_backend, generate_json, generate_text, is_live)
 
 # Retrieved context and conversation history are bounded for provider compatibility.
 _TOP_K = int(os.getenv("RAG_TOP_K", "24"))
@@ -26,6 +27,12 @@ class GroundedAnswer(BaseModel):
 
 
 def retrieve(device_id: str, query: str, top_k: int = _TOP_K) -> list[dict]:
+    return workflow.run_step("retrieve", lambda: _retrieve(device_id, query, top_k))
+
+
+def _retrieve(device_id: str, query: str, top_k: int) -> list[dict]:
+    if not datastore.count_docs(devices.chunks_path(device_id)):
+        return []
     query_embedding = embed_text(query)
     collection = devices.chunks_path(device_id)
     chunks = datastore.nearest(collection, query_embedding, top_k=top_k,
@@ -73,20 +80,8 @@ def answer(device_id: str, query: str, *, screen_context: str = "", role: str = 
 
     context = _format_context(chunks)
     if not is_live():
-        seen: set[str] = set()
-        parts = []
-        for chunk in chunks:
-            source = chunk.get("source_name", "source")
-            if source in seen:
-                continue
-            seen.add(source)
-            parts.append(f"From '{source}':\n{chunk.get('text', '')[:400].strip()}")
-            if len(parts) >= 3:
-                break
-        body = "\n\n".join(parts)
-        return {"answer": f"(Offline retrieval — not a model response. Configure the selected AI provider "
-                f"for synthesized answers.) Most relevant passages:\n\n{body}", "citations": sorted(seen),
-                "sources": source_names, "backend": "offline-retrieval", "grounded": True}
+        return {"answer": "Nebius is not configured. Set NEBIUS_API_KEY; no local model answer was substituted.",
+                "citations": [], "sources": source_names, "backend": "unavailable", "grounded": False}
 
     screen = f"\n\nCurrent screen context (for reference only):\n{screen_context}" if screen_context else ""
     prompt = (
@@ -181,7 +176,7 @@ class ModeResponse(BaseModel):
 
 def converse(device_id: str, query: str, *, mode: str = "ask", screen_context: str = "",
              role: str = "user", top_k: int = _TOP_K, history: list[dict] | None = None,
-             attached_context: str = "") -> dict:
+             attached_context: str = "", public_packet: dict | None = None) -> dict:
     """Mode-aware, clarify-first assistant: ask / plan / agent.
 
     Returns {answer, needs_clarification, clarifying_questions, awaiting_confirmation,
@@ -201,6 +196,16 @@ def converse(device_id: str, query: str, *, mode: str = "ask", screen_context: s
                 "artifacts": [], "sources": source_names, "backend": "offline", "mode": mode}
 
     context = _format_context(chunks) if chunks else "(no ingested documentation for this device)"
+    public_context = ""
+    if public_packet and public_packet.get("device_id") == device_id:
+        public_context = (
+            "\nSupplementary PUBLIC evidence, not confirmed device truth. Do not use it to supply "
+            "device IDs, limits, decoding rules or dataset specifications. Cite PUBLIC IDs separately; "
+            "discuss relevance and conflicts, not physical instructions. Absence of evidence is not safety.\n"
+            + "\n\n".join(f"[PUBLIC {source['id']}] {source['url']}\n{source['text'][:2500]}"
+                           for source in public_packet.get("sources", [])[:6]))
+        source_names += [f"PUBLIC {source['id']}" for source in public_packet.get("sources", [])[:6]]
+    context += public_context
     screen = f"\n\nCurrent screen context:\n{screen_context}" if screen_context else ""
     prompt = (
         f"You are Specta, the application's device assistant. Device: '{device['name']}' (type {device['type']}).\n"

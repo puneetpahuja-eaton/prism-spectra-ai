@@ -2,9 +2,15 @@ param(
     [string]$Project = 'project-fd312a16-8445-4b1f-862',
     [string]$Region = 'asia-south1',
     [string]$Model = 'nvidia/Nemotron-3_5-Lightning',
+    [ValidateRange(1, 600)]
+    [int]$NebiusTimeoutSeconds = 240,
     [string]$Service = 'prism-spectra-ai',
     [string]$NebiusSecret = 'nebius-api-key',
     [string]$TavilySecret = '',
+    [string]$LangSmithSecret = '',
+    [string]$LangSmithWorkspaceSecret = '',
+    [ValidateSet('https://api.smith.langchain.com', 'https://eu.api.smith.langchain.com')]
+    [string]$LangSmithEndpoint = 'https://api.smith.langchain.com',
     [string]$FirestoreDatabase = 'prism-spectra-demo',
     [string]$AdminEmail = 'admin@kairos.ai',
     [Parameter(Mandatory = $true)]
@@ -25,10 +31,17 @@ $Config = Get-Content (Join-Path $PSScriptRoot 'deployment.json') -Raw | Convert
 if ($FirestoreDatabase -eq '(default)') {
     throw 'Use a separate named Firestore database for the public demo, not existing private device storage.'
 }
-$Variables = "AI_PROVIDER=nebius,NEBIUS_MODEL=$Model,EMBEDDING_PROVIDER=nebius,NEBIUS_EMBED_MODEL=Qwen/Qwen3-Embedding-8B,USE_VERTEX=0,USE_FIRESTORE=1,FIRESTORE_DATABASE=$FirestoreDatabase,SEED_DEMO=1,USE_SECRET_MANAGER=0,GOOGLE_CLOUD_PROJECT=$Project,GOOGLE_CLOUD_LOCATION=global,GCS_BUCKET=$($Config.bucket),BQ_DATASET=$($Config.dataset),KAIROS_ADMIN_EMAIL=$AdminEmail,FORCE_MOCK=0"
+$Tracing = if ($LangSmithSecret) { 'true' } else { 'false' }
+$Variables = "AI_PROVIDER=nebius,NEBIUS_MODEL=$Model,NEBIUS_TIMEOUT_SECONDS=$NebiusTimeoutSeconds,EMBEDDING_PROVIDER=nebius,NEBIUS_EMBED_MODEL=Qwen/Qwen3-Embedding-8B,USE_FIRESTORE=1,FIRESTORE_DATABASE=$FirestoreDatabase,SEED_DEMO=1,USE_SECRET_MANAGER=0,GOOGLE_CLOUD_PROJECT=$Project,GOOGLE_CLOUD_LOCATION=global,GCS_BUCKET=$($Config.bucket),BQ_DATASET=$($Config.dataset),KAIROS_ADMIN_EMAIL=$AdminEmail,FORCE_MOCK=0,LANGSMITH_TRACING=$Tracing,LANGSMITH_PROJECT=prism-spectra-ai,LANGSMITH_ENDPOINT=$LangSmithEndpoint,LANGSMITH_HIDE_INPUTS=true,LANGSMITH_HIDE_OUTPUTS=true"
 $Secrets = "NEBIUS_API_KEY=$($NebiusSecret):latest,KAIROS_ADMIN_PASSWORD=$($AdminPasswordSecret):latest"
 if ($TavilySecret) {
     $Secrets += ",TAVILY_API_KEY=$($TavilySecret):latest"
+}
+if ($LangSmithSecret) {
+    $Secrets += ",LANGSMITH_API_KEY=$($LangSmithSecret):latest"
+}
+if ($LangSmithWorkspaceSecret) {
+    $Secrets += ",LANGSMITH_WORKSPACE_ID=$($LangSmithWorkspaceSecret):latest"
 }
 & $Python $Cli run deploy $Service --source . --project=$Project --region=$Region `
     --build-service-account="projects/$Project/serviceAccounts/$($Config.build_account)" `

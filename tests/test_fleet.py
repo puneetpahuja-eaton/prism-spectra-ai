@@ -7,9 +7,9 @@ import numpy as np
 
 import bq
 from fleet_data import FleetDataset, csv_template, demo_dataset, load_bundle, load_csv
-from fleet_models import LearnedDetectors
+from fleet_models import BaselineDetectors
 from fleet_runtime import FleetEngine
-from gemini_client import ModelUnavailable
+from nebius_client import ModelUnavailable
 from power_demo import POWER_SCENARIOS, power_demo_dataset
 
 SOP = (Path(__file__).resolve().parents[1] / "data" / "sop.md").read_text(encoding="utf-8")
@@ -75,14 +75,14 @@ class FleetTests(unittest.TestCase):
             load_bundle(" " * 2_000_001)
 
     def test_models_train_on_history_only(self):
-        detector = LearnedDetectors(self.data)
+        detector = BaselineDetectors(self.data)
         expected = detector.states["MTR-07"]["median"].copy()
         self.data.telemetry[0].metrics["voltage_v"] = 999_999
-        altered = LearnedDetectors(self.data)
+        altered = BaselineDetectors(self.data)
         np.testing.assert_array_equal(expected, altered.states["MTR-07"]["median"])
 
-    def test_detector_sees_fault_and_markov_does_not_flag_benign_rare_code(self):
-        detector = LearnedDetectors(self.data)
+    def test_statistics_see_deviation_and_code_membership_accepts_benign_code(self):
+        detector = BaselineDetectors(self.data)
         reading = next(row for row in self.data.telemetry if row.asset_id == "FEEDER-01" and "VOLT_SAG" in row.event_codes)
         self.assertTrue(detector.score(reading)["is_anomaly"])
         self.assertTrue(detector.scan_codes(reading, ["OK"])["is_anomaly"])
@@ -98,7 +98,7 @@ class FleetTests(unittest.TestCase):
         self.assertEqual(len([case for case in engine.cases if case["category"] == "electrical_supply"]), 1)
         self.assertEqual(engine.ancestors("MTR-07"), ["FEEDER-01"])
         self.assertIn("correlate_topology", [event["tool"] for event in engine.trace])
-        # Vertex prompts must be native JSON, not numpy scalars coerced into strings.
+        # Provider prompts must be native JSON, not numpy scalars coerced into strings.
         encoded = json.loads(json.dumps(case["evidence"]))
         self.assertIsInstance(encoded["fleet_context"]["correlated_observations"]["FEEDER-01"]["metric_model"]["signals"][0]["anomalous"], bool)
 

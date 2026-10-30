@@ -24,13 +24,14 @@ if (-not (Test-Path $Python)) {
 }
 
 $InstallMarker = Join-Path $PSScriptRoot '.venv\requirements-installed'
-if (-not (Test-Path $InstallMarker)) {
-    Write-Output 'Installing project dependencies (first launch only)...'
+$RequirementsHash = (Get-FileHash (Join-Path $PSScriptRoot 'requirements.txt') -Algorithm SHA256).Hash
+if (-not (Test-Path $InstallMarker) -or (Get-Content $InstallMarker -Raw).Trim() -ne $RequirementsHash) {
+    Write-Output 'Installing project dependencies (first launch or dependency update)...'
     & $Python -m pip install -r (Join-Path $PSScriptRoot 'requirements.txt')
     if ($LASTEXITCODE -ne 0) {
         throw 'Dependency installation failed. Check your network connection and rerun this launcher.'
     }
-    New-Item -ItemType File -Path $InstallMarker -Force | Out-Null
+    Set-Content -LiteralPath $InstallMarker -Value $RequirementsHash
 }
 
 $env:AI_PROVIDER = 'nebius'

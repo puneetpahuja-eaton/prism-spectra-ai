@@ -9,7 +9,7 @@ import requests
 from pydantic import BaseModel
 
 import embeddings
-from gemini_client import ModelUnavailable, backend, generate_json, is_live, nebius_post
+from nebius_client import ModelUnavailable, backend, generate_json, is_live, nebius_post
 
 
 class SampleAnswer(BaseModel):
@@ -35,7 +35,7 @@ class NebiusClientTests(unittest.TestCase):
             "NEBIUS_API_KEY": "test-key",
             "NEBIUS_MODEL": "nvidia/Nemotron-3_5-Lightning",
             "FORCE_MOCK": "0",
-        }, clear=True), patch("gemini_client.requests.post", return_value=response) as post:
+        }, clear=True), patch("nebius_client.requests.post", return_value=response) as post:
             result = generate_json("Diagnose this synthetic incident.", SampleAnswer)
 
         self.assertEqual(result["answer"], "voltage sag")
@@ -59,7 +59,7 @@ class NebiusClientTests(unittest.TestCase):
         response.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
-        }, clear=True), patch("gemini_client.requests.post", return_value=response):
+        }, clear=True), patch("nebius_client.requests.post", return_value=response):
             with self.assertRaisesRegex(ModelUnavailable, "required response schema"):
                 generate_json("Brief these public sources.", SampleAnswer)
 
@@ -71,7 +71,7 @@ class NebiusClientTests(unittest.TestCase):
         corrected = json.dumps({"spec": {"assets": [asset]}})
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
-        }, clear=True), patch("gemini_client._nebius_generate_text", side_effect=[invalid, corrected]) as model:
+        }, clear=True), patch("nebius_client._nebius_generate_text", side_effect=[invalid, corrected]) as model:
             result = generate_json("One synthetic asset.", DatasetDraft, repair_schema=True)
         self.assertEqual(len(result["spec"]["assets"]), 1)
         self.assertEqual(model.call_count, 2)
@@ -82,7 +82,7 @@ class NebiusClientTests(unittest.TestCase):
     def test_schema_repair_stops_after_one_attempt_and_reports_failure(self):
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
-        }, clear=True), patch("gemini_client._nebius_generate_text", return_value="{}") as model:
+        }, clear=True), patch("nebius_client._nebius_generate_text", return_value="{}") as model:
             with self.assertRaises(ModelUnavailable):
                 generate_json("Answer.", SampleAnswer, repair_schema=True)
         self.assertEqual(model.call_count, 2)
@@ -91,7 +91,7 @@ class NebiusClientTests(unittest.TestCase):
         response = Mock(ok=False, status_code=400)
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
-        }, clear=True), patch("gemini_client.requests.post", return_value=response) as post:
+        }, clear=True), patch("nebius_client.requests.post", return_value=response) as post:
             with self.assertRaisesRegex(ModelUnavailable, "HTTP 400"):
                 generate_json("Brief these public sources.", SampleAnswer)
         post.assert_called_once()
@@ -103,7 +103,7 @@ class NebiusClientTests(unittest.TestCase):
             "AI_PROVIDER": "nebius",
             "NEBIUS_API_KEY": "test-key",
             "FORCE_MOCK": "0",
-        }, clear=True), patch("gemini_client.requests.post", return_value=response):
+        }, clear=True), patch("nebius_client.requests.post", return_value=response):
             with self.assertRaisesRegex(ModelUnavailable, "malformed or truncated JSON"):
                 generate_json("Diagnose this synthetic incident.", SampleAnswer)
 
@@ -115,7 +115,7 @@ class NebiusClientTests(unittest.TestCase):
         }]}
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
-        }, clear=True), patch("gemini_client.requests.post", return_value=response):
+        }, clear=True), patch("nebius_client.requests.post", return_value=response):
             with self.assertRaisesRegex(ModelUnavailable, "exhausted the output token budget"):
                 generate_json("Brief these public sources.", SampleAnswer)
 
@@ -133,9 +133,9 @@ class NebiusClientTests(unittest.TestCase):
             with self.subTest(error_type=error_type.__name__):
                 cause = error_type("private-request-details")
                 with patch.dict(os.environ, {"NEBIUS_API_KEY": "test-key"}, clear=True), \
-                        patch("gemini_client.netsetup.configure_tls"), \
-                        patch("gemini_client.requests.post", side_effect=cause) as post, \
-                        self.assertLogs("gemini_client", level="WARNING") as logs:
+                        patch("nebius_client.netsetup.configure_tls"), \
+                        patch("nebius_client.requests.post", side_effect=cause) as post, \
+                        self.assertLogs("nebius_client", level="WARNING") as logs:
                     with self.assertRaises(ModelUnavailable) as caught:
                         nebius_post("chat/completions", {})
                 self.assertIn(expected, str(caught.exception))
@@ -148,8 +148,8 @@ class NebiusClientTests(unittest.TestCase):
     def test_read_timeout_reports_the_configured_deadline_not_a_credit_diagnosis(self):
         with patch.dict(os.environ, {
             "NEBIUS_API_KEY": "test-key", "NEBIUS_TIMEOUT_SECONDS": "45",
-        }, clear=True), patch("gemini_client.netsetup.configure_tls"), \
-                patch("gemini_client.requests.post", side_effect=requests.exceptions.ReadTimeout):
+        }, clear=True), patch("nebius_client.netsetup.configure_tls"), \
+                patch("nebius_client.requests.post", side_effect=requests.exceptions.ReadTimeout):
             with self.assertRaisesRegex(ModelUnavailable, "45-second read timeout") as caught:
                 nebius_post("chat/completions", {})
         self.assertIn("not a confirmed credit error", str(caught.exception))
@@ -160,9 +160,9 @@ class NebiusClientTests(unittest.TestCase):
             with self.subTest(status=status):
                 response = Mock(ok=False, status_code=status)
                 with patch.dict(os.environ, {"NEBIUS_API_KEY": "test-key"}, clear=True), \
-                        patch("gemini_client.netsetup.configure_tls"), \
-                        patch("gemini_client.requests.post", return_value=response) as post, \
-                        patch("gemini_client.time.sleep"):
+                        patch("nebius_client.netsetup.configure_tls"), \
+                        patch("nebius_client.requests.post", return_value=response) as post, \
+                        patch("nebius_client.time.sleep"):
                     with self.assertRaises(ModelUnavailable) as caught:
                         nebius_post("chat/completions", {})
                 self.assertIn(f"HTTP {status}", str(caught.exception))

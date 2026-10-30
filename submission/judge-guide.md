@@ -46,6 +46,17 @@ inference may take time; wait for the page to finish before clicking again.
    one Map and one Extract call; actual credit usage is shown when reported.
    If a provider fails, evidence is retained with explicit partial/failure
    status, not replaced with a fabricated brief.
+7. **Inline evidence:** in an Analysis case, selected live incident or either
+   Specta surface, expand **Enrich with approved public evidence**. Supply public
+   terms/domains, inspect the preview and approve. It uses the same bounded
+   Tavily pipeline, without sending private observations as queries. Review the
+   Nemotron comparison: D passages are supplied evidence, P passages public
+   supplementary evidence. It does not modify device limits or controls.
+8. **Workflow provenance:** expand the result's metadata panel for LangChain
+   stages, elapsed time, validation outcome and provider-reported usage.
+   LangSmith tracing is optional and metadata-only. Confirm the displayed
+   tracing status; no dashboard ingestion or independent evaluation is claimed
+   solely from the presence of a key.
 
 ## Verified hosted behavior
 
@@ -69,6 +80,11 @@ not production efficacy or award claims.
 - Downtime and cost figures are assumption-based, not measured savings.
 - The five stages form an orchestrated workflow, not five separately trained
   models.
+- Active analysis retains deterministic baseline arithmetic, not local learned
+  models. Scores can differ from the historical PRISM reference. Inference and
+  embeddings are Nebius-only; provider failure never selects Gemini or local AI.
+- Public research/incident interpretation jobs are session-local and bounded.
+  Their completion does not mean a diagnosis is proven or a repair occurred.
 - This is an existing-project adaptation. See the
   [significant-update disclosure](prior-work-disclosure.md) and
   [tool feedback](project-description.md#tool-feedback-from-implementation).

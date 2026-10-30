@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 
-from gemini_client import generate_json
+from nebius_client import generate_json
 from models import Diagnosis
 from device_grounding import SOURCE_ONLY
 

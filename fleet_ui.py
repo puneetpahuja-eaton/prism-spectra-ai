@@ -11,7 +11,7 @@ from google.auth.exceptions import GoogleAuthError
 import bq
 from fleet_data import csv_template, demo_dataset, load_bundle, load_csv
 from fleet_runtime import FleetEngine
-from gemini_client import backend as model_backend
+from nebius_client import backend as model_backend
 from power_demo import POWER_SCENARIOS, power_demo_dataset
 
 
@@ -91,7 +91,6 @@ def operations() -> None:
                 "asset_id": key, "anomaly_score": value["metrics"]["score"],
                 "codes": " | ".join(value["reading"].event_codes),
                 "metric_anomaly": value["metrics"]["is_anomaly"],
-                "Markov_surprise": value["codes"]["transition_surprise"],
                 "unknown_codes": ", ".join(value["codes"]["unknown_codes"]),
             } for key, value in engine.latest.items()], hide_index=True, width="stretch")
         asset_id = st.selectbox("Asset chart", list(engine.assets), key=f"chart-{engine.run_id}")
@@ -102,9 +101,9 @@ def operations() -> None:
             st.line_chart(series)
             scores = pd.DataFrame(engine.score_history)
             st.line_chart(scores[scores.asset_id == asset_id].set_index("timestamp")[["anomaly_score"]])
-        st.caption("Robust-z >= 3 flags deviation. Isolation Forest corroborates it; Mahalanobis is diagnostic only. "
-                   "Metric-only cases require two consecutive anomalous samples for the same metric; fault/unknown "
-                   "codes open cases immediately. Event transition surprise is not a calibrated failure probability.")
+        st.caption("Robust-z >= 3 flags deviation; Mahalanobis is diagnostic arithmetic only. "
+                   "Metric-only cases require two consecutive anomalous samples for the same metric. "
+                   "Explicit demo fault codes open cases immediately. No local learned model is used.")
     with tabs[1]:
         if not engine.cases:
             st.info("No cases opened. Process timestamps to observe detection.")
@@ -218,7 +217,7 @@ def render_fleet(sop: str, *, offline: bool) -> None:
                     )
                 text = upload.getvalue().decode("utf-8-sig")
                 data = load_csv(text) if upload.name.lower().endswith(".csv") else load_bundle(text)
-                with st.spinner("Validating topology and training historical models..."):
+                with st.spinner("Validating topology and computing baseline statistics..."):
                     engine = FleetEngine(data, sop, offline=offline)
             except (ValueError, UnicodeDecodeError) as error:
                 st.error(f"Replacement rejected; existing replay is unchanged: {error}")
@@ -227,11 +226,11 @@ def render_fleet(sop: str, *, offline: bool) -> None:
                 st.session_state["fleet_playing"] = False
                 st.success("Replacement loaded. The demo fleet is no longer used in this replay.")
         if st.button("Load built-in synthetic fleet", type="primary"):
-            with st.spinner("Training per-asset models on known-healthy synthetic history..."):
+            with st.spinner("Computing per-asset statistics on synthetic baseline history..."):
                 st.session_state["fleet_engine"] = FleetEngine(demo, sop, offline=offline)
             st.session_state["fleet_playing"] = False
         if st.button("Load PRISM-style power fleet (22 assets / 6 scenarios)"):
-            with st.spinner("Generating three days of healthy power history and fitting 22 per-asset models..."):
+            with st.spinner("Generating three days of synthetic power history and per-asset statistics..."):
                 from fleet_data import FleetDataset
                 data = FleetDataset.model_validate_json(_power_demo_json())
                 st.session_state["fleet_engine"] = FleetEngine(data, sop, offline=offline, evaluation_scenarios=POWER_SCENARIOS)

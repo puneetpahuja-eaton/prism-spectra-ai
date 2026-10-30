@@ -99,6 +99,11 @@ Cloud Run instances; configure a private GCS bucket for persistent uploaded data
 Tavily stays optional and separate: public product, symptom and approved domains
 start blank, require explicit input and consent, and are not promoted into
 private device truth or control instructions.
+Inline comparisons use at most six supplied and six public excerpts, capped at
+1,200 characters each. Unicode is retained without escape expansion to bound
+the model input. The output budget includes Nemotron reasoning as well as final
+JSON; it is not a target for credit consumption. The downloadable research packet
+retains the retrieved public evidence. This comparison is not an exhaustive review.
 
 ## Specta: conversational assistant on every screen
 
@@ -154,8 +159,8 @@ Diagnosis, grounded chat, dataset generation, monitoring-plan generation, and
 review-only work-order drafts use the selected text model. The Nebius path is
 explicit: if Token Factory is unavailable or returns invalid output, the app
 reports the failure and escalates rather than silently switching providers.
-`AI_PROVIDER=google` is available only as an explicit local comparison setting;
-use `AI_PROVIDER=nebius` for the hackathon demo.
+Nebius is the only supported inference provider. Gemini/Vertex inference and
+local-model fallback are removed; obsolete provider values are rejected.
 
 The Nebius API key is required for a live Nebius call. It is not stored in source
 control, and an offline run does not count as evidence that the Nebius requirement
@@ -168,11 +173,18 @@ is met. The case trace and sidebar display the actual configured provider.
   document/query embeddings (4096 dimensions).
 - Optional **Google Cloud Run**, **Firestore**, **Cloud Storage**, **BigQuery**,
   and **Secret Manager** for hosting and persistence.
-- Embedding selection is explicit: `EMBEDDING_PROVIDER=nebius` for Token
-  Factory, `local` for deterministic keyword vectors, or `google` for an
-  explicitly configured Google embedding model. In Nebius mode, inherited
-  Google credentials never select Google embeddings. A remote embedding failure
-  is reported; it is not silently replaced by local or another provider's vectors.
+- Embeddings use `EMBEDDING_PROVIDER=nebius` only. Missing keys and remote
+  failures are explicit errors, never local or Google embedding fallback.
+- Active analysis uses transparent median/MAD deviation and baseline code
+  membership, not Isolation Forest or a learned transition model. Thresholds
+  are statistical settings, not device specifications. Historical PRISM source
+  remains unchanged for attribution; its learned models are not instantiated
+  by the active Analysis/Live Monitoring adapter. Detection scores intentionally
+  differ from the historical reference.
+- LangChain Core coordinates bounded retrieval, model and approved research
+  stages. Optional LangSmith receives allowlisted stage/latency/usage metadata
+  only, with input/output capture disabled. It receives no device names,
+  prompts, passages, output text, endpoint URLs or original exception messages.
 - Synthetic or authorized telemetry only. The built-in live demo feed is
   simulated; real REST monitoring is read-only.
 
@@ -228,13 +240,73 @@ The conversation and active task remain available for a deliberate `retry`.
 `NEBIUS_TIMEOUT_SECONDS` sets the read deadline (default 120 seconds); the
 connection deadline is 10 seconds. Adjust the deadline only after confirming
 that slow responses, rather than connectivity or account errors, are the cause.
+The deployment script sets a bounded 240-second read deadline for reasoning-heavy
+requests after hosted testing exposed a 120-second comparison timeout; override
+it with `-NebiusTimeoutSeconds` if needed. Inline research and live interpretation
+run in background jobs, so this deadline does not block the polling loop.
 
 The seeded demo login is `admin@kairos.ai` / `admin12345`; change the password
 before exposing a deployment. Without a model key, the app can run in local
-offline mode for development and tests, but it does not make a qualifying live
-Nebius inference call. To index documents without a key, explicitly select
-`EMBEDDING_PROVIDER=local` and start Streamlit directly instead of using the
-Nebius-only launcher.
+observation-only mode, but it cannot index documents or produce AI answers
+without Nebius credentials. `FORCE_MOCK=1` enables deterministic test doubles
+only; the launcher and hosted demo force it off. A test double is never reported
+as a live model call.
+
+## Inline evidence and observability
+
+Analysis cases, selected Live Monitoring incidents, the Ask the device workspace
+and the Specta dock offer **Enrich with approved public evidence**. Enter public
+product/symptom/domain fields yourself, inspect the exact outbound preview and
+approve before execution. Private code, observations and chat are not search
+queries. The tool reuses the existing Tavily Search/optional Map/Extract
+workflow; the separate Public Research page remains unchanged.
+
+Research and live incident interpretation run as bounded in-process jobs, not
+inside the polling loop. Results are session-local and can be lost when an
+instance restarts. Eight jobs may be queued per process, with four workers;
+queue overload is explicit. Slow AI does not turn a missed poll into a fake
+reading or diagnosis. Deep live analysis uses the same deterministic observation
+layer and asynchronous Nebius interpretation for synthetic and supplied data.
+
+Nemotron compares supplied device passages and the approved public passages.
+Known passage IDs are validated and displayed source text is copied, not
+rewritten by the model. This checks source membership, not entailment or truth.
+Public evidence never becomes generation-tool specifications, thresholds or
+control instructions. A comparison failure preserves raw evidence as partial.
+Research is scoped to the current device/run/case or chat ID; identical requests
+reuse that session result until **Allow a fresh paid run** is selected.
+Ask/Plan do not execute generation; public research always needs its own
+explicit approval, irrespective of chat mode.
+
+Fill these optional observability settings locally:
+
+```dotenv
+LANGSMITH_API_KEY=
+LANGSMITH_WORKSPACE_ID=
+LANGSMITH_PROJECT=prism-spectra-ai
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_TRACING=true
+LANGSMITH_HIDE_INPUTS=true
+LANGSMITH_HIDE_OUTPUTS=true
+```
+
+Only official US/EU LangSmith API endpoints are accepted. LangChain needs no
+API key. A tracing failure is reported separately and does not discard a valid
+application result. Metadata exports exclude full request/response payloads
+even if global automatic tracing is enabled. Provider-reported tokens/credits
+are shown only when supplied; no monetary cost is guessed.
+Hosted secrets must be configured separately from the local environment.
+Toloka/Tandem are not included.
+
+Synthetic regression evaluation:
+
+```powershell
+.\.venv\Scripts\python.exe tools\evaluate_partners.py
+```
+
+The runner reports measured test pass/fail counts and elapsed time. These are
+synthetic integration/guardrail checks, not real-device diagnosis accuracy or
+independent human validation.
 
 ### Existing knowledge after switching embedding models
 

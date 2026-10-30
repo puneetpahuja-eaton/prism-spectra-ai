@@ -15,14 +15,14 @@ from actuator import act
 from decider import decide
 from diagnostician import diagnose
 from evidence import build_evidence
-from gemini_client import ModelUnavailable, backend as model_backend
+from nebius_client import ModelUnavailable, backend as model_backend
 from models import Incident
 import storage
 from value import estimate_value
 from verifier import verify
 
 logger = logging.getLogger(__name__)
-MODEL_FAILURES = (ModelUnavailable, ValidationError, ValueError, GoogleAuthError, GoogleAPICallError, httpx.HTTPError)
+MODEL_FAILURES = (ModelUnavailable, ValidationError, ValueError, RuntimeError, OSError, GoogleAuthError, GoogleAPICallError, httpx.HTTPError)
 
 
 def load_sop() -> str:

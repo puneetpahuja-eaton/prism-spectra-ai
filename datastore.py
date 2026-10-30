@@ -1,6 +1,6 @@
 """Document store with a Firestore backend and a local-JSON fallback.
 
-Mirrors the repo's existing pattern (storage.py / gemini_client.py): real Google
+Mirrors the repo's existing pattern (storage.py / nebius_client.py): real Google
 Cloud when configured, a deterministic local fallback otherwise so the platform
 runs and is testable without any cloud credentials.
 

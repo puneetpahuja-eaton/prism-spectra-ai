@@ -6,7 +6,7 @@ from pathlib import Path
 import bq
 import embeddings
 from orchestrator import approve_simulation, load_scenarios, load_sop, run_case
-from gemini_client import backend
+from nebius_client import backend
 
 
 def main():
@@ -31,7 +31,7 @@ def main():
             "decision": case["decision"]["action"], "seconds": case["elapsed_seconds"],
             "errors": case["errors"],
         }))
-        expected_source = "nebius:" if backend().startswith("Nebius Token Factory") else "gemini:"
+        expected_source = "nebius:"
         if case["errors"] or not case["diagnosis"]["_source"].startswith(expected_source):
             raise RuntimeError(f"Live {backend()} verification failed.")
         if case["decision"]["requires_approval"]:
