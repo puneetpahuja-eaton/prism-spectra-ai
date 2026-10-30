@@ -111,6 +111,8 @@ _SCHEMA_HINT = (
     "If ranges are unavailable, ask the user to supply illustrative synthetic ranges or attach a source. "
     "Do not infer physical relationships or translate unknown event codes into fault meanings."
     " Do not repeat assets or metrics; match the user's requested asset count exactly."
+    " Keep evidence short: copy only passages supporting the metric's name, unit and range, "
+    "not entire source tables. Do not generate CSV rows, raw readings, lengthy notes or event-log decoders."
 )
 
 

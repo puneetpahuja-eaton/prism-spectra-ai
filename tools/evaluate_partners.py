@@ -15,7 +15,7 @@ os.environ.update(FORCE_MOCK="1", USE_FIRESTORE="0", USE_SECRET_MANAGER="0",
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromNames([
-        "tests.test_partner_workflow", "tests.test_nebius_client",
+        "tests.test_partner_workflow", "tests.test_nebius_client", "tests.test_nebius_streaming",
         "tests.test_embeddings", "tests.test_specta", "tests.test_device_grounding",
         "tests.test_public_research",
     ])

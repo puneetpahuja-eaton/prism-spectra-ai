@@ -17,6 +17,18 @@ class SampleAnswer(BaseModel):
     answer: str
 
 
+def completion_response(data):
+    response = Mock(ok=True, status_code=200)
+    events = []
+    for choice in data["choices"]:
+        events.append({"choices": [{"index": 0, "delta": choice["message"],
+                                    "finish_reason": choice.get("finish_reason", "stop")}]})
+    if "usage" in data:
+        events.append({"choices": [], "usage": data["usage"]})
+    response.iter_lines.return_value = ["data: " + json.dumps(event) for event in events] + ["data: [DONE]"]
+    return response
+
+
 class NebiusClientTests(unittest.TestCase):
     def test_nebius_is_the_explicit_live_backend(self):
         with patch.dict(os.environ, {
@@ -29,8 +41,7 @@ class NebiusClientTests(unittest.TestCase):
             self.assertEqual(backend(), "Nebius Token Factory · nvidia/Nemotron-3_5-Lightning")
 
     def test_generate_json_uses_token_factory_and_validates_the_schema(self):
-        response = Mock(ok=True, status_code=200)
-        response.json.return_value = {"choices": [{"message": {"content": '{"answer":"voltage sag"}'}}]}
+        response = completion_response({"choices": [{"message": {"content": '{"answer":"voltage sag"}'}}]})
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius",
             "NEBIUS_API_KEY": "test-key",
@@ -56,8 +67,7 @@ class NebiusClientTests(unittest.TestCase):
         self.assertIn("SampleAnswer", kwargs["json"]["messages"][0]["content"])
 
     def test_missing_required_fields_remain_an_explicit_failure(self):
-        response = Mock(ok=True, status_code=200)
-        response.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        response = completion_response({"choices": [{"message": {"content": "{}"}}]})
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
         }, clear=True), patch("nebius_client.requests.post", return_value=response):
@@ -111,8 +121,7 @@ class NebiusClientTests(unittest.TestCase):
         post.assert_called_once()
 
     def test_malformed_model_json_is_an_explicit_failure(self):
-        response = Mock(ok=True, status_code=200)
-        response.json.return_value = {"choices": [{"message": {"content": "not json"}}]}
+        response = completion_response({"choices": [{"message": {"content": "not json"}}]})
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius",
             "NEBIUS_API_KEY": "test-key",
@@ -122,11 +131,11 @@ class NebiusClientTests(unittest.TestCase):
                 generate_json("Diagnose this synthetic incident.", SampleAnswer)
 
     def test_reasoning_budget_exhaustion_is_an_explicit_failure(self):
-        response = Mock(ok=True, status_code=200)
-        response.json.return_value = {"choices": [{
+        data = {"choices": [{
             "finish_reason": "length",
             "message": {"content": "", "reasoning_content": "unfinished reasoning"},
         }]}
+        response = completion_response(data)
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
         }, clear=True), patch("nebius_client.requests.post", return_value=response):
@@ -134,13 +143,11 @@ class NebiusClientTests(unittest.TestCase):
                 generate_json("Brief these public sources.", SampleAnswer)
 
     def test_budget_recovery_is_once_bounded_and_keeps_schema_and_usage(self):
-        exhausted = Mock(ok=True, status_code=200)
-        exhausted.json.return_value = {"choices": [{"finish_reason": "length", "message": {"content": ""}}],
-                                      "usage": {"completion_tokens": 16384, "total_tokens": 18000}}
-        completed = Mock(ok=True, status_code=200)
-        completed.json.return_value = {"choices": [{"finish_reason": "stop",
-                                                   "message": {"content": '{"answer":"Validated answer"}'}}],
-                                      "usage": {"completion_tokens": 1400, "total_tokens": 3000}}
+        exhausted = completion_response({"choices": [{"finish_reason": "length", "message": {"content": ""}}],
+                                         "usage": {"completion_tokens": 16384, "total_tokens": 18000}})
+        completed = completion_response({"choices": [{"finish_reason": "stop",
+                                                      "message": {"content": '{"answer":"Validated answer"}'}}],
+                                         "usage": {"completion_tokens": 1400, "total_tokens": 3000}})
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
             "LANGSMITH_TRACING": "false",
@@ -156,12 +163,11 @@ class NebiusClientTests(unittest.TestCase):
         self.assertEqual(run.report["stages"][0]["usage"]["completion_tokens"], 16384)
 
     def test_exhaustion_does_not_loop_or_export_http_success_as_model_success(self):
-        response = Mock(ok=True, status_code=200)
-        response.json.return_value = {"choices": [{"finish_reason": "length", "message": {"content": ""}}]}
+        data = {"choices": [{"finish_reason": "length", "message": {"content": ""}}]}
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
             "LANGSMITH_TRACING": "false",
-        }, clear=True), patch("nebius_client.requests.post", return_value=response) as post:
+        }, clear=True), patch("nebius_client.requests.post", side_effect=lambda *a, **k: completion_response(data)) as post:
             with workflow.Workflow("specta") as run:
                 with self.assertRaises(ModelUnavailable):
                     generate_json("Supplied facts only.", SampleAnswer, max_output_tokens=16384)
@@ -170,9 +176,8 @@ class NebiusClientTests(unittest.TestCase):
         self.assertTrue(all(event["status"] == "failed" for event in run.report["stages"]))
 
     def test_length_finished_partial_json_is_never_salvaged_as_a_completed_answer(self):
-        response = Mock(ok=True, status_code=200)
-        response.json.return_value = {"choices": [{"finish_reason": "length",
-                                                  "message": {"content": '{"answer":"Partial'}}]}
+        response = completion_response({"choices": [{"finish_reason": "length",
+                                                      "message": {"content": '{"answer":"Partial'}}]})
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
         }, clear=True), patch("nebius_client.requests.post", return_value=response) as post:
@@ -181,10 +186,8 @@ class NebiusClientTests(unittest.TestCase):
         post.assert_called_once()
 
     def test_recovery_still_rejects_missing_required_fields(self):
-        exhausted = Mock(ok=True, status_code=200)
-        exhausted.json.return_value = {"choices": [{"finish_reason": "length", "message": {"content": ""}}]}
-        invalid = Mock(ok=True, status_code=200)
-        invalid.json.return_value = {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]}
+        exhausted = completion_response({"choices": [{"finish_reason": "length", "message": {"content": ""}}]})
+        invalid = completion_response({"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]})
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
         }, clear=True), patch("nebius_client.requests.post", side_effect=[exhausted, invalid]) as post:

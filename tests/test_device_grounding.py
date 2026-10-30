@@ -42,6 +42,7 @@ class DeviceGroundingTests(PlatformTestBase):
             with self.assertRaises(ValueError):
                 dataset_gen.generate_spec(irrelevant, request, irrelevant + target)
         prompt = model.call_args.args[0]
+        self.assertEqual(model.call_args.kwargs["max_output_tokens"], 32768)
         self.assertLess(len(prompt), 38000)
         self.assertIn(request, prompt)
         self.assertIn(target, prompt)

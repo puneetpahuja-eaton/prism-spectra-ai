@@ -133,11 +133,20 @@ It is not the VS Code extension and does not have terminal or editor access.
   cannot validate generated fields. This is not exhaustive repository review.
   Oversized guidance requires a smaller request with longer material attached.
   Monitoring reuses the already retrieved context rather than retrieving twice.
-- If Nebius explicitly reports output-budget exhaustion, structured generation
-  retries once with a doubled allowance, capped at 32,768 tokens including
-  reasoning. Truncated output is never accepted as complete. Transport timeouts
-  are not automatically retried. Schema/evidence corrections are separately
-  bounded; usage includes failed attempts and recovered stages are labeled.
+- Device dataset/monitoring generation starts with a 32,768-token allowance,
+  including reasoning, rather than spending a smaller attempt before retrying.
+  Other structured calls with smaller budgets can recover once from explicit
+  exhaustion, capped at 32,768 tokens. Truncated output is never accepted.
+  Schema/evidence corrections are separately bounded; usage includes failed
+  attempts and recovered stages are labeled.
+- All chat-completion calls receive Nebius's streaming response internally.
+  Reasoning tokens are discarded, not displayed or traced. The read timeout now
+  bounds idle network waits rather than the entire active generation. A separate
+  `NEBIUS_GENERATION_DEADLINE_SECONDS` (default 600, maximum 1,800) is checked as
+  stream events arrive; an idle read can still wait up to
+  `NEBIUS_TIMEOUT_SECONDS` (240 on the hosted deployment). Disconnects, incomplete
+  streams and deadlines remain explicit failures, never partial artifacts or
+  automatic transport retries. Final JSON and source evidence are still validated.
 - Downloads, source evidence and reviewed application appear inside the
   conversation. Generation never starts
   polling. Engineers/admins must verify the plan and supply the endpoint; stop

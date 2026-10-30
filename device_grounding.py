@@ -77,7 +77,7 @@ def generate_grounded(generate: Callable[..., dict], prompt: str, schema: type[B
     """Correct model-written evidence once; never ask users to fix invented citations."""
     original_prompt = prompt
     for attempt in range(2):
-        result = generate(prompt, schema, max_output_tokens=16384, repair_schema=True)
+        result = generate(prompt, schema, max_output_tokens=32768, repair_schema=True)
         try:
             return validate(result)
         except ClarificationNeeded as error:

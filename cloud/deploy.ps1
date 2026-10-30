@@ -4,6 +4,8 @@ param(
     [string]$Model = 'nvidia/Nemotron-3_5-Lightning',
     [ValidateRange(1, 600)]
     [int]$NebiusTimeoutSeconds = 240,
+    [ValidateRange(1, 1800)]
+    [int]$NebiusGenerationDeadlineSeconds = 600,
     [string]$Service = 'prism-spectra-ai',
     [string]$NebiusSecret = 'nebius-api-key',
     [string]$TavilySecret = '',
@@ -32,7 +34,7 @@ if ($FirestoreDatabase -eq '(default)') {
     throw 'Use a separate named Firestore database for the public demo, not existing private device storage.'
 }
 $Tracing = if ($LangSmithSecret) { 'true' } else { 'false' }
-$Variables = "AI_PROVIDER=nebius,NEBIUS_MODEL=$Model,NEBIUS_TIMEOUT_SECONDS=$NebiusTimeoutSeconds,EMBEDDING_PROVIDER=nebius,NEBIUS_EMBED_MODEL=Qwen/Qwen3-Embedding-8B,USE_FIRESTORE=1,FIRESTORE_DATABASE=$FirestoreDatabase,SEED_DEMO=1,USE_SECRET_MANAGER=0,GOOGLE_CLOUD_PROJECT=$Project,GOOGLE_CLOUD_LOCATION=global,GCS_BUCKET=$($Config.bucket),BQ_DATASET=$($Config.dataset),KAIROS_ADMIN_EMAIL=$AdminEmail,FORCE_MOCK=0,LANGSMITH_TRACING=$Tracing,LANGSMITH_PROJECT=prism-spectra-ai,LANGSMITH_ENDPOINT=$LangSmithEndpoint,LANGSMITH_HIDE_INPUTS=true,LANGSMITH_HIDE_OUTPUTS=true"
+$Variables = "AI_PROVIDER=nebius,NEBIUS_MODEL=$Model,NEBIUS_TIMEOUT_SECONDS=$NebiusTimeoutSeconds,NEBIUS_GENERATION_DEADLINE_SECONDS=$NebiusGenerationDeadlineSeconds,EMBEDDING_PROVIDER=nebius,NEBIUS_EMBED_MODEL=Qwen/Qwen3-Embedding-8B,USE_FIRESTORE=1,FIRESTORE_DATABASE=$FirestoreDatabase,SEED_DEMO=1,USE_SECRET_MANAGER=0,GOOGLE_CLOUD_PROJECT=$Project,GOOGLE_CLOUD_LOCATION=global,GCS_BUCKET=$($Config.bucket),BQ_DATASET=$($Config.dataset),KAIROS_ADMIN_EMAIL=$AdminEmail,FORCE_MOCK=0,LANGSMITH_TRACING=$Tracing,LANGSMITH_PROJECT=prism-spectra-ai,LANGSMITH_ENDPOINT=$LangSmithEndpoint,LANGSMITH_HIDE_INPUTS=true,LANGSMITH_HIDE_OUTPUTS=true"
 $Secrets = "NEBIUS_API_KEY=$($NebiusSecret):latest,KAIROS_ADMIN_PASSWORD=$($AdminPasswordSecret):latest"
 if ($TavilySecret) {
     $Secrets += ",TAVILY_API_KEY=$($TavilySecret):latest"

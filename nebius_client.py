@@ -6,9 +6,11 @@ import logging
 import os
 import time
 from pathlib import Path
+from time import monotonic as _generation_clock
 
 import requests
 from pydantic import BaseModel, ValidationError
+from urllib3.exceptions import ReadTimeoutError
 
 import netsetup
 import workflow
@@ -72,14 +74,20 @@ def _post(endpoint: str, payload: dict) -> dict:
     netsetup.configure_tls()
     url = f"{os.getenv('NEBIUS_API_BASE_URL', _NEBIUS_BASE_URL).rstrip('/')}/{endpoint}"
     timeout = max(1, int(os.getenv("NEBIUS_TIMEOUT_SECONDS", "120")))
+    streaming = payload.get("stream") is True
     for attempt in range(3):
+        response = None
         try:
+            started = _generation_clock() if streaming else 0
             response = requests.post(
                 url,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json=payload,
                 timeout=(10, timeout),
+                stream=streaming,
             )
+            if streaming and response.ok:
+                data = _read_completion_stream(response, started, str(payload.get("model", "")))
         except requests.RequestException as error:
             logging.getLogger(__name__).warning(
                 "Nebius Token Factory transport failure (%s).", type(error).__name__)
@@ -90,7 +98,9 @@ def _post(endpoint: str, payload: dict) -> dict:
                 detail = "The proxy connection failed. Check the app host's proxy and network configuration."
             elif isinstance(error, requests.exceptions.ConnectTimeout):
                 detail = "The 10-second connection timeout expired before Nebius could be reached. Check the app host's network."
-            elif isinstance(error, requests.exceptions.ReadTimeout):
+            elif (isinstance(error, requests.exceptions.ReadTimeout) or
+                  (isinstance(error, requests.exceptions.ConnectionError) and error.args and
+                   isinstance(error.args[0], ReadTimeoutError))):
                 detail = (f"Nebius did not return a response within the {timeout}-second read timeout. "
                           "It may still be processing; wait before retrying to avoid duplicate work. "
                           "This is not a confirmed credit error.")
@@ -101,6 +111,9 @@ def _post(endpoint: str, payload: dict) -> dict:
             else:
                 detail = "A transport failure prevented the request from completing. Check the app host's connectivity."
             raise ModelUnavailable(f"Nebius Token Factory: {detail}") from error
+        finally:
+            if response is not None:
+                response.close()
         if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
             time.sleep(attempt + 1)
             continue
@@ -113,15 +126,69 @@ def _post(endpoint: str, payload: dict) -> dict:
             }.get(response.status_code, "")
             raise ModelUnavailable(
                 f"Nebius Token Factory {endpoint} request failed with HTTP {response.status_code}.{hint}")
-        try:
-            data = response.json()
-        except ValueError as error:
-            raise ModelUnavailable(f"Nebius Token Factory returned invalid {endpoint} JSON.") from error
+        if not streaming:
+            try:
+                data = response.json()
+            except ValueError as error:
+                raise ModelUnavailable(f"Nebius Token Factory returned invalid {endpoint} JSON.") from error
         if not isinstance(data, dict):
             raise ModelUnavailable(f"Nebius Token Factory returned an invalid {endpoint} response.")
         workflow.model_usage(data, str(payload.get("model", "")))
         return data
     raise ModelUnavailable("Nebius Token Factory request did not complete.")
+
+
+def _read_completion_stream(response: requests.Response, started: float, model: str) -> dict:
+    deadline = max(1, min(1800, int(os.getenv("NEBIUS_GENERATION_DEADLINE_SECONDS", "600"))))
+    response.encoding = "utf-8"
+    content = []
+    finish = None
+    usage = {}
+    received = 0
+    for line in response.iter_lines(chunk_size=128, decode_unicode=True):
+        if _generation_clock() - started > deadline:
+            raise ModelUnavailable(f"Nebius Token Factory exceeded the {deadline}-second generation deadline. "
+                                   "No partial answer was accepted. Narrow the request before retrying.")
+        if not line or line.startswith((":", "event:", "id:", "retry:")):
+            continue
+        if not line.startswith("data:"):
+            raise ModelUnavailable("Nebius Token Factory returned an invalid completion stream.")
+        raw = line[5:].strip()
+        if raw == "[DONE]":
+            if finish not in ("stop", "length"):
+                raise ModelUnavailable("Nebius Token Factory ended its stream without a complete final answer.")
+            return {"choices": [{"message": {"content": "".join(content)}, "finish_reason": finish}],
+                    "usage": usage}
+        received += len(raw)
+        if received > 8_000_000:
+            raise ModelUnavailable("Nebius Token Factory completion stream exceeded its safe response-size limit.")
+        try:
+            event = json.loads(raw)
+        except ValueError as error:
+            raise ModelUnavailable("Nebius Token Factory returned invalid completion-stream JSON.") from error
+        if not isinstance(event, dict) or event.get("error"):
+            raise ModelUnavailable("Nebius Token Factory reported a completion-stream error. No artifact was created.")
+        if isinstance(event.get("usage"), dict):
+            usage = event["usage"]
+            workflow.model_usage(event, model)
+        choices = event.get("choices", [])
+        if not isinstance(choices, list):
+            raise ModelUnavailable("Nebius Token Factory returned invalid completion-stream choices.")
+        for choice in choices:
+            if not isinstance(choice, dict) or choice.get("index", 0) != 0:
+                raise ModelUnavailable("Nebius Token Factory returned an unexpected completion-stream choice.")
+            delta = choice.get("delta", {})
+            if not isinstance(delta, dict):
+                raise ModelUnavailable("Nebius Token Factory returned an invalid completion-stream delta.")
+            text = delta.get("content")
+            if text is not None:
+                if not isinstance(text, str):
+                    raise ModelUnavailable("Nebius Token Factory returned invalid completion-stream text.")
+                content.append(text)
+            if choice.get("finish_reason") is not None:
+                finish = choice["finish_reason"]
+    raise ModelUnavailable("Nebius Token Factory disconnected before completing its answer. "
+                           "No partial answer was accepted; the request was not automatically retried.")
 
 
 def _nebius_generate_text(prompt: str, *, system_instruction: str | None = None,
@@ -166,6 +233,8 @@ def _generate_completion(prompt: str, *, system_instruction: str | None,
         ],
         "temperature": temperature,
         "max_tokens": max_output_tokens,
+        "stream": True,
+        "stream_options": {"include_usage": True},
     }
     if response_format:
         payload["response_format"] = response_format
