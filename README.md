@@ -435,6 +435,9 @@ For a separate Cloud Run deployment:
    The database defaults to `prism-spectra-demo`; override with
    `-FirestoreDatabase`. The script rejects `(default)` to avoid accidental
    reuse. Instance count defaults to two with scale-to-zero enabled.
+   Session affinity keeps a browser's Streamlit session and generated-media
+   requests on the same instance where possible. Affinity is best-effort, not
+   durable storage or conversation recovery after an instance restart.
    To enable public research in the hosted demo, create a `tavily-api-key`
    Secret Manager secret, grant the runtime identity access, and pass
    `-TavilySecret tavily-api-key`. Local `.env` files are not deployed.
