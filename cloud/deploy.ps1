@@ -18,7 +18,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$AdminPasswordSecret,
     [ValidateRange(1, 4)]
-    [int]$MaxInstances = 2
+    [int]$MaxInstances = 1
 )
 $ErrorActionPreference = 'Stop'
 $PythonCommand = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
