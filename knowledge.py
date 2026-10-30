@@ -1,0 +1,185 @@
+"""Persistent per-device knowledge-link registry (GitHub repos, Confluence pages).
+
+Links are stored in the datastore so they survive logins/logouts and deployments
+(with Firestore). Re-ingesting a link refreshes its chunks instead of duplicating
+them, so the device's knowledge accumulates cleanly across different sources and
+stays current for any single source.
+"""
+from __future__ import annotations
+
+import datetime
+import hashlib
+
+import datastore
+import devices
+import ingest
+from integrations import confluence, github
+
+LINK_KINDS = ("github", "confluence")
+
+
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _link_id(kind: str, ref: str) -> str:
+    return f"{kind}-{hashlib.md5(ref.strip().lower().encode()).hexdigest()[:12]}"
+
+
+def list_links(device_id: str) -> list[dict]:
+    return sorted(datastore.list_docs(devices.links_path(device_id)),
+                  key=lambda item: item.get("added_at", ""))
+
+
+def _save_link(device_id: str, link_id: str, kind: str, ref: str, result: dict) -> None:
+    existing = datastore.get_doc(devices.links_path(device_id), link_id) or {}
+    datastore.set_doc(devices.links_path(device_id), link_id, {
+        "id": link_id, "kind": kind, "ref": ref,
+        "added_at": existing.get("added_at", _now()), "last_ingested": _now(),
+        "chunk_count": result.get("chunks", 0), "file_count": result.get("files"),
+        "tree_sha": result.get("tree_sha"), "file_shas": result.get("file_shas"),
+        "version": result.get("version"),
+        "detail": {k: v for k, v in result.items() if k != "file_shas"},
+    })
+
+
+def _ensure_link_stub(device_id: str, link_id: str, kind: str, ref: str) -> None:
+    """Register the link immediately so it appears in the UI and survives an interrupted run."""
+    if datastore.get_doc(devices.links_path(device_id), link_id):
+        return
+    datastore.set_doc(devices.links_path(device_id), link_id, {
+        "id": link_id, "kind": kind, "ref": ref, "added_at": _now(),
+        "last_ingested": None, "chunk_count": 0, "status": "ingesting",
+    })
+
+
+def _sync_github(device_id: str, link_id: str, ref: str, branch: str | None,
+                 existing: dict, on_progress, force: bool) -> dict:
+    listing = github.repo_listing(ref, branch)
+    files = listing["files"]
+    if not files:
+        raise ValueError("No ingestible text files found in that repository.")
+    repo_name = f"{listing['owner']}/{listing['repo']}"
+    current_shas = {item["path"]: item["sha"] for item in files}
+    prev_shas = {} if force else (existing.get("file_shas") or {})
+
+    base = {"repo": repo_name, "branch": listing["branch"], "matched": listing["matched"],
+            "capped": listing["matched"] > len(files), "tree_truncated": listing["truncated"],
+            "tree_sha": listing["tree_sha"], "file_shas": current_shas}
+
+    # Fast path: the whole repo is unchanged.
+    if not force and existing.get("tree_sha") and existing["tree_sha"] == listing["tree_sha"]:
+        return {**base, "files": 0, "chunks": existing.get("chunk_count", 0),
+                "added": 0, "updated": 0, "removed": 0, "unchanged": len(files), "skipped": True}
+
+    _ensure_link_stub(device_id, link_id, "github", ref)
+    if force:
+        ingest.delete_by_link(device_id, link_id)
+
+    changed = [item for item in files if prev_shas.get(item["path"]) != item["sha"]]
+    # Resume support: files already stored with the same content SHA (from an earlier,
+    # possibly interrupted run) are kept and skipped, so a re-run only does the rest.
+    done_pairs = {(source.get("path"), source.get("blob_sha"))
+                  for source in ingest.sources_by_link(device_id, link_id)}
+    to_ingest = [item for item in changed if (item["path"], item["sha"]) not in done_pairs]
+    removed_paths = set(prev_shas) - set(current_shas)
+    # Only delete sources for paths we are about to (re)ingest, plus files removed upstream.
+    ingest.delete_sources_for_paths(device_id, link_id,
+                                    {item["path"] for item in to_ingest} | removed_paths)
+    github.ingest_items(device_id, listing["owner"], listing["repo"], to_ingest,
+                        link_id=link_id, on_progress=on_progress, total=len(to_ingest))
+    stored = ingest.sources_by_link(device_id, link_id)
+    total_chunks = sum(source.get("chunk_count", 0) for source in stored)
+    added = sum(1 for item in to_ingest if item["path"] not in prev_shas)
+    return {**base, "files": len(stored), "chunks": total_chunks,
+            "added": added, "updated": len(to_ingest) - added, "removed": len(removed_paths),
+            "unchanged": len(files) - len(to_ingest), "skipped": False}
+
+
+def _sync_confluence(device_id: str, link_id: str, ref: str, existing: dict,
+                     on_progress, force: bool) -> dict:
+    page = confluence.fetch_page(ref)
+    if not force and existing.get("version") is not None and existing["version"] == page["version"]:
+        return {"title": page["title"], "chunks": existing.get("chunk_count", 0),
+                "page_id": page["page_id"], "version": page["version"], "skipped": True}
+    ingest.delete_by_link(device_id, link_id)
+    if on_progress:
+        on_progress(0, 1, "embedding page")
+    record = ingest.ingest_text(device_id, name=f"confluence:{page['title']}", kind="confluence",
+                                text=page["text"], link_id=link_id, meta={"version": page["version"]})
+    if on_progress:
+        on_progress(1, 1, page["title"])
+    return {"title": page["title"], "chunks": record["chunk_count"], "page_id": page["page_id"],
+            "version": page["version"], "skipped": False}
+
+
+def add_or_refresh(device_id: str, kind: str, ref: str, branch: str | None = None,
+                   on_progress=None, force: bool = False) -> dict:
+    """Ingest or incrementally refresh a GitHub repo / Confluence page and register it.
+
+    Incremental: only files whose content SHA changed are re-fetched and re-embedded
+    (the repo is skipped entirely if its root tree SHA is unchanged). A Confluence page
+    is skipped if its version is unchanged. `force=True` does a full re-ingest.
+    `on_progress(done, total, label)` drives a progress bar.
+    """
+    if kind not in LINK_KINDS:
+        raise ValueError("Unsupported link kind.")
+    ref = ref.strip()
+    link_id = _link_id(kind, ref)
+    existing = datastore.get_doc(devices.links_path(device_id), link_id) or {}
+    if kind == "github":
+        result = _sync_github(device_id, link_id, ref, branch, existing, on_progress, force)
+    else:
+        result = _sync_confluence(device_id, link_id, ref, existing, on_progress, force)
+    _save_link(device_id, link_id, kind, ref, result)
+    return result
+
+
+def reingest_all(device_id: str, on_progress=None) -> list[dict]:
+    """Re-pull every saved link (incremental) so the agent is retrained on the latest content."""
+    links = list_links(device_id)
+    outcomes = []
+    for index, link in enumerate(links):
+        def _cb(done, total, label, _i=index, _ref=link["ref"]):
+            if on_progress:
+                tag = _ref.rstrip("/").split("/")[-1]
+                on_progress(done, total, f"[{_i + 1}/{len(links)}] {tag}: {label}")
+        try:
+            result = add_or_refresh(device_id, link["kind"], link["ref"], on_progress=_cb)
+            if on_progress and result.get("skipped"):
+                tag = link["ref"].rstrip("/").split("/")[-1]
+                on_progress(1, 1, f"[{index + 1}/{len(links)}] {tag}: up to date")
+            outcomes.append({"ref": link["ref"], "ok": True, **result})
+        except Exception as error:  # noqa: BLE001
+            outcomes.append({"ref": link["ref"], "ok": False, "error": str(error)})
+    return outcomes
+
+
+def delete_link(device_id: str, link_id: str, *, purge: bool = True) -> None:
+    if purge:
+        ingest.delete_by_link(device_id, link_id)
+    datastore.delete_doc(devices.links_path(device_id), link_id)
+
+
+def github_ref(device_id: str) -> str | None:
+    """Return the first saved GitHub repo ref for a device, if any."""
+    for link in list_links(device_id):
+        if link["kind"] == "github":
+            return link["ref"]
+    return None
+
+
+def fetch_repo_file_text(device_id: str, path: str, max_chars: int = 60000) -> dict:
+    """Fetch and parse a single file (by path) from the device's saved GitHub repo.
+
+    Supports text and Excel (.xlsm/.xlsx) files. Returns {name, text, repo}.
+    """
+    ref = github_ref(device_id)
+    if not ref:
+        raise ValueError("No GitHub repository is linked to this device. Add one in Integrations first.")
+    data = github.fetch_file_bytes(ref, path)
+    text = ingest.extract_text(path.rsplit("/", 1)[-1], data)
+    if not text.strip():
+        raise ValueError(f"'{path}' produced no readable text.")
+    return {"name": path, "text": text[:max_chars], "repo": ref,
+            "truncated": len(text) > max_chars}

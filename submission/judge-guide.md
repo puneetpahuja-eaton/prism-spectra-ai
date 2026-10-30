@@ -1,0 +1,63 @@
+# Judge testing guide
+
+- **Track:** Best Apps and Agents
+- **Bonus consideration:** Best Use of Tavily
+- **Application:** https://prism-spectra-ai-498775210896.asia-south1.run.app
+- **Source:** https://github.com/puneetpahuja-eaton/prism-spectra-ai
+- **License:** [MIT](../LICENSE)
+
+Use the engineer credentials supplied in Devpost's testing instructions. The
+hosted demo does not use the local development admin password. Judges do not
+need their own API keys or a paid account. Scale-to-zero cold starts and model
+inference may take time; wait for the page to finish before clicking again.
+
+## Suggested walkthrough
+
+1. **Home:** sign in and confirm the synthetic Power Distribution Panel is
+   listed. The sidebar shows Nebius Token Factory and Qwen embeddings.
+2. **Ask the device:** select the demo device, choose Ask, and ask:
+   "Which assets are included and which injected fault needs engineer
+   escalation?" A small, explicitly synthetic knowledge corpus is pre-indexed.
+   The answer should include source references. Plan and Agent modes use the
+   same device-scoped assistant for plans and synthetic artifact generation.
+3. **Live Monitoring:** leave the built-in simulated feed enabled and click
+   Start. Observe changing readings, then click Stop. This exercises the live
+   polling engine, not a physical device. Authorized REST sources can be
+   configured separately; there is no real equipment control.
+4. **Analysis:** use the bundled synthetic dataset and replay controls to
+   inspect Monitor, Diagnose, Decide, Act and Verify. Read model provenance,
+   escalation state, evidence and assumptions rather than interpreting demo
+   outcomes as measured industrial accuracy.
+5. **Public Research:** enter public product `Eaton 5PX UPS`, symptom
+   `battery alarm`, and approved domain `eaton.com`. Enable Map with starting
+   URL `https://www.eaton.com/us/en-us/support.html`. Review the outbound
+   preview, consent, and click Research public evidence.
+6. Review findings, source-linked passages, unresolved applicability questions,
+   discovered documentation and the real Search/Map/Extract HTTP trace.
+   Download the evidence packet. A complete run uses three searches, at most
+   one Map and one Extract call; actual credit usage is shown when reported.
+   If a provider fails, evidence is retained with explicit partial/failure
+   status, not replaced with a fabricated brief.
+
+## Verified hosted behavior
+
+On October 30, 2026, the deployed application passed engineer login and role
+checks, produced a source-referenced device answer, and completed public
+research with six sources, two mapped links, three Nemotron findings, five
+Tavily HTTP 200 responses and a downloaded JSON evidence packet. The simulated
+live feed was started and stopped successfully. These are integration checks,
+not production efficacy or award claims.
+
+## Boundaries and disclosure
+
+- Use only synthetic or public data; do not upload private employer material.
+- Private device records are not automatically used as public web queries.
+- Source passage membership does not establish truth or model applicability.
+- Automatic equipment recovery is simulated. Real equipment commands and
+  external engineer notifications are not implemented.
+- Downtime and cost figures are assumption-based, not measured savings.
+- The five stages form an orchestrated workflow, not five separately trained
+  models.
+- This is an existing-project adaptation. See the
+  [significant-update disclosure](prior-work-disclosure.md) and
+  [tool feedback](project-description.md#tool-feedback-from-implementation).

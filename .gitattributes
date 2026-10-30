@@ -1,0 +1,8 @@
+* text=auto
+*.pdf binary
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.wav binary
+prism_reference/prism/** -text whitespace=cr-at-eol,-blank-at-eof
+prism_reference/data/** -text whitespace=cr-at-eol
