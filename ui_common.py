@@ -95,7 +95,10 @@ def device_selector(key: str = "active_device") -> dict | None:
     labels = {d["id"]: f"{d['name']} ({d['type']})" for d in all_devices}
     ids = list(labels)
     current = st.session_state.get(key)
-    index = ids.index(current) if current in ids else 0
+    index = ids.index(current) if current in ids else None
     chosen = st.selectbox("Device", ids, index=index, format_func=lambda i: labels[i], key=f"{key}_select")
     st.session_state[key] = chosen
+    if chosen is None:
+        st.info("Select your device, or explicitly select the synthetic demo. Demo knowledge is not used for other devices.")
+        return None
     return devices.get_device(chosen)

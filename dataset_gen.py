@@ -16,13 +16,13 @@ from __future__ import annotations
 import hashlib
 import math
 from datetime import datetime, timedelta, timezone
-import json
-import re
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from device_grounding import SOURCE_ONLY, verify_quote, verify_unit
 from fleet_data import FleetAsset, FleetDataset, Reading
-from gemini_client import generate_text, is_live
+from gemini_client import generate_json, generate_text, is_live
 
 _ANOMALY_CODE = {"spike": "OVERLOAD_ALARM", "sag": "VOLT_SAG", "drift": "THD_HIGH", "dropout": "LOAD_LOST"}
 # Map an anomaly kind to the PRISM ground-truth fault type (for accuracy scoring).
@@ -31,24 +31,37 @@ _ANOMALY_FAULT = {"spike": "OVERLOAD", "sag": "VOLTAGE_SAG", "drift": "HARMONIC_
 
 
 class MetricSpec(BaseModel):
-    name: str = Field(description="Short metric/column name, e.g. voltage_a_v")
-    unit: str = Field(default="", description="Engineering unit, e.g. V, A, kW")
+    name: str = Field(description="Exact metric name from supplied sources or explicit user guidance")
+    unit: str = Field(default="", description="Source-defined unit; empty only for a documented dimensionless metric")
     normal_min: float = Field(description="Typical minimum healthy value")
     normal_max: float = Field(description="Typical maximum healthy value")
+    evidence: str = Field(default="", description="Exact supplied passage containing the metric name, unit and range")
+
+    @model_validator(mode="after")
+    def valid_range(self):
+        if not math.isfinite(self.normal_min) or not math.isfinite(self.normal_max) or self.normal_min >= self.normal_max:
+            raise ValueError("Supply finite metric ranges with normal_min < normal_max.")
+        return self
 
 
 class AssetSpec(BaseModel):
     id: str = Field(description="Asset/device identifier")
-    type: str = Field(default="METER")
-    criticality: str = Field(default="medium")
+    type: str = Field(default="GENERIC")
+    criticality: str = Field(default="unknown")
     metrics: list[MetricSpec] = Field(min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def unique_metrics(self):
+        if len({m.name for m in self.metrics}) != len(self.metrics):
+            raise ValueError("Metric names must be unique within an asset.")
+        return self
 
 
 class AnomalySpec(BaseModel):
     asset_id: str
     metric: str
     start_fraction: float = Field(default=0.5, ge=0, le=1, description="Where in the replay it begins (0..1)")
-    kind: str = Field(default="spike", description="spike | sag | drift | dropout")
+    kind: Literal["spike", "sag", "drift", "dropout"] = "spike"
     severity: float = Field(default=0.6, ge=0, le=1)
     recovers: bool = Field(default=True, description="If true, the fault clears after its window so the "
                                                      "engine auto-resolves it; if false, it persists and is escalated.")
@@ -58,16 +71,29 @@ class AnomalySpec(BaseModel):
 
 
 class DatasetSpec(BaseModel):
-    assets: list[AssetSpec] = Field(min_length=1, max_length=10)
+    profile: Literal["independent", "power-demo"] = "independent"
+    assets: list[AssetSpec] = Field(min_length=1, max_length=10, json_schema_extra={"uniqueItems": True})
     sample_interval_min: int = Field(default=5, ge=1, le=1440)
     duration_days: int = Field(default=3, ge=1, le=14)
     history_days: int = Field(default=1, ge=1, le=14)
     anomalies: list[AnomalySpec] = Field(default_factory=list)
     notes: str = ""
 
+    @model_validator(mode="after")
+    def unique_assets(self):
+        if len({a.id for a in self.assets}) != len(self.assets):
+            raise ValueError("Asset IDs must be unique.")
+        return self
+
+
+class DatasetDraft(BaseModel):
+    spec: DatasetSpec | None = None
+    missing_details: list[str] = Field(default_factory=list)
+
 
 def clarifying_questions(device_context: str, request: str, reference: str = "") -> str:
     prompt = (
+        f"{SOURCE_ONLY}\n"
         "A user wants to generate a synthetic dataset for a monitored device. Before generating, ask 3-6 "
         "concise clarifying questions that would materially change the dataset (parameters to include, "
         "units/ranges, duration and sampling, which anomalies to inject, number of assets). Ask only "
@@ -79,59 +105,53 @@ def clarifying_questions(device_context: str, request: str, reference: str = "")
     return generate_text(prompt, temperature=0.3)
 
 
-_SCHEMA_HINT = """Return ONLY a JSON object (no prose, no markdown fences) with this shape:
-{
-  "assets": [
-    {"id": "METER-1", "type": "METER", "criticality": "high",
-     "metrics": [{"name": "voltage_a_v", "unit": "V", "normal_min": 220, "normal_max": 240}]}
-  ],
-  "sample_interval_min": 1,
-  "duration_days": 3,
-  "history_days": 1,
-  "anomalies": [
-    {"asset_id": "METER-1", "metric": "voltage_a_v", "start_fraction": 0.5,
-     "kind": "sag", "severity": 0.7, "description": "voltage sag on phase A"}
-  ],
-  "notes": "assumptions here"
-}
-Rules: metric names are short snake_case; include unit and realistic normal_min/normal_max.
-anomaly kind is one of: spike, sag, drift, dropout. 1-10 assets, up to 120 metrics each, 1-6 anomalies.
-Include every parameter the user asks for (per-phase and totals) as its own metric."""
-
-
-def _extract_json(text: str) -> dict:
-    text = text.strip()
-    fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    if fence:
-        text = fence.group(1)
-    else:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1:
-            text = text[start:end + 1]
-    return json.loads(text)
+_SCHEMA_HINT = (
+    "Return a DatasetDraft with spec set to the proposed DatasetSpec, or spec=null and "
+    "missing_details containing specific questions. Use profile=independent. "
+    "Each metric requires an exact supplied evidence passage containing "
+    "its original name, unit and numeric range. Empty units require explicit dimensionless guidance. "
+    "Use asset type GENERIC and criticality unknown unless explicitly documented. "
+    "If necessary details are missing, do not produce a dataset. "
+    "Do not infer physical relationships or translate unknown event codes into fault meanings."
+    " Do not repeat assets or metrics; match the user's requested asset count exactly."
+)
 
 
 def generate_spec(device_context: str, request: str, reference: str = "", answers: str = "") -> dict:
     if not is_live():
         raise RuntimeError("A configured live AI provider is required to generate a dataset spec.")
     prompt = (
+        f"{SOURCE_ONLY}\n"
         "Design a COMPACT dataset specification (not the data itself) for a synthetic dataset of the "
         "monitored device. Choose realistic metrics with normal_min/normal_max ranges and units, grounded "
-        "in the context and referenced parameter list. Include 1-4 labelled anomalies. Make reasonable "
-        "assumptions for anything unspecified.\n\n"
+        "in the context and referenced parameter list. Include only synthetic anomalies requested by "
+        "the user. Ask for missing metrics, units, ranges, assets or sampling details. "
+        "Explicit user-selected synthetic sampling governs this dataset only; it does not change "
+        "the actual device's live polling configuration.\n\n"
         f"{_SCHEMA_HINT}\n\n"
         f"Device context:\n{device_context[:8000]}\n\n"
         f"Referenced parameter file (optional, authoritative for names/IDs/units):\n{reference[:12000]}\n\n"
         f"User request: {request}\n\n"
         f"User answers to clarifying questions (if any): {answers}"
     )
-    text = generate_text(prompt, temperature=0.3, max_output_tokens=16384)
-    try:
-        raw = _extract_json(text)
-    except (json.JSONDecodeError, ValueError) as error:
-        raise RuntimeError(f"Could not parse the dataset spec from the model response: {error}") from error
-    return DatasetSpec.model_validate(raw).model_dump()
+    draft = DatasetDraft.model_validate(generate_json(prompt, DatasetDraft, max_output_tokens=16384))
+    if draft.missing_details or draft.spec is None:
+        raise ValueError("Provide missing dataset details: " + "; ".join(
+            draft.missing_details or ["documented metrics, units, ranges, assets and sampling details"]))
+    spec = draft.spec
+    if spec.profile != "independent":
+        raise ValueError("The power-demo profile is reserved for explicitly selected demonstration fixtures.")
+    supplied = "\n".join((device_context, reference, request, answers))
+    for asset in spec.assets:
+        for metric in asset.metrics:
+            verify_unit(metric.unit, metric.evidence)
+            verify_quote(metric.evidence, supplied,
+                         [metric.name, metric.unit, metric.normal_min, metric.normal_max])
+        if asset.type != "GENERIC":
+            verify_quote(asset.type, supplied, [])
+        if asset.criticality != "unknown":
+            verify_quote(asset.criticality, supplied, [])
+    return spec.model_dump()
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +246,10 @@ def ensure_anomaly_mix(spec: DatasetSpec) -> list[AnomalySpec]:
     """
     slots: list[list[tuple[str, str, str]]] = []
     for asset in spec.assets:
+        if spec.profile == "independent":
+            slots.append([(asset.id, metric.name, kind)
+                          for metric in asset.metrics for kind in ("spike", "sag", "dropout")])
+            continue
         volt = next((m.name for m in asset.metrics if _role_of(m.name) == "voltage"), None)
         curr = next((m.name for m in asset.metrics
                      if _role_of(m.name) == "current" and "neutral" not in m.name.lower()), None)
@@ -248,6 +272,9 @@ def ensure_anomaly_mix(spec: DatasetSpec) -> list[AnomalySpec]:
 
     per_day = max(1, (24 * 60) // spec.sample_interval_min)
     replay_n = min(max(2, spec.duration_days * per_day), max(2, 10_000 // max(1, len(spec.assets))))
+    if spec.profile == "independent" and replay_n < 8:
+        raise ValueError("At least 8 replay readings per asset are needed for distinct recovery and escalation events. "
+                         "Increase the duration or reduce the sampling interval.")
     n_total = max(min(3, len(ordered)), min(round(replay_n / 24), len(ordered)))
     n_escalate = max(1, n_total // 3) if n_total >= 2 else 0
     n_auto = n_total - n_escalate
@@ -259,6 +286,7 @@ def ensure_anomaly_mix(spec: DatasetSpec) -> list[AnomalySpec]:
         frac = round(0.25 + 0.40 * (i / max(1, n_auto - 1)), 3) if n_auto > 1 else 0.4
         anomalies.append(AnomalySpec(asset_id=asset_id, metric=metric, kind=kind,
                                      start_fraction=min(0.65, frac), severity=0.8, recovers=True,
+                                     duration_fraction=0.05,
                                      description=f"Transient {kind} on {metric} — auto-resolved."))
     for j in range(n_escalate):
         asset_id, metric, kind = chosen[n_auto + j]
@@ -269,7 +297,54 @@ def ensure_anomaly_mix(spec: DatasetSpec) -> list[AnomalySpec]:
     return anomalies
 
 
+def _build_independent(spec: DatasetSpec) -> FleetDataset:
+    """Illustrative independent signals; no implicit equipment physics or fault meanings."""
+    interval = spec.sample_interval_min
+    per_day = max(1, 1440 // interval)
+    history_n = min(max(20, spec.history_days * per_day), 20_000 // len(spec.assets))
+    replay_n = min(max(2, spec.duration_days * per_day), 10_000 // len(spec.assets))
+    start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=(history_n + replay_n) * interval)
+    assets = [FleetAsset(id=a.id, name=a.id, type=a.type, criticality=a.criticality, site="SYNTHETIC")
+              for a in spec.assets]
+    metrics_by_asset = {a.id: {m.name for m in a.metrics} for a in spec.assets}
+    for anomaly in spec.anomalies:
+        if anomaly.metric not in metrics_by_asset.get(anomaly.asset_id, set()):
+            raise ValueError("Synthetic anomaly references an unknown asset or metric.")
+        if anomaly.kind not in _ANOMALY_CODE:
+            raise ValueError("Synthetic anomaly kind must be spike, sag, drift or dropout.")
+    history, replay = [], []
+    for asset in spec.assets:
+        for index in range(history_n + replay_n):
+            values = {}
+            codes = []
+            for metric in asset.metrics:
+                span = metric.normal_max - metric.normal_min
+                value = (metric.normal_min + metric.normal_max) / 2 + span * 0.35 * (
+                    2 * _rand01(asset.id, metric.name, index) - 1)
+                for anomaly in spec.anomalies:
+                    if (index < history_n or anomaly.asset_id != asset.id or anomaly.metric != metric.name):
+                        continue
+                    tick = index - history_n
+                    first = int(anomaly.start_fraction * (replay_n - 1))
+                    last = first + max(1, int(anomaly.duration_fraction * replay_n))
+                    if tick < first or (anomaly.recovers and tick >= last):
+                        continue
+                    value += span * (1 + anomaly.severity) * (-1 if anomaly.kind in ("sag", "dropout") else 1)
+                    codes.append(f"SYNTHETIC_{anomaly.kind.upper()}")
+                values[metric.name] = round(value, 6)
+            row = Reading(timestamp=start + timedelta(minutes=index * interval), asset_id=asset.id,
+                          metrics=values, event_codes=sorted(set(codes)) or ["OK"])
+            (history if index < history_n else replay).append(row)
+    return FleetDataset(source="uploaded", assets=assets, history=history, telemetry=replay)
+
+
 def build_dataset(spec: DatasetSpec) -> FleetDataset:
+    if spec.profile == "independent":
+        return _build_independent(spec)
+    return _build_power_demo(spec)
+
+
+def _build_power_demo(spec: DatasetSpec) -> FleetDataset:
     interval = spec.sample_interval_min
     per_day = max(1, (24 * 60) // interval)
     n_assets = len(spec.assets)

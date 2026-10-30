@@ -9,7 +9,7 @@ import datastore
 
 _DEVICES = "devices"
 PROTOCOLS = ("rest", "modbus", "dlms")
-CRITICALITIES = ("low", "medium", "high", "critical")
+CRITICALITIES = ("unknown", "low", "medium", "high", "critical")
 
 
 class DeviceError(RuntimeError):
@@ -26,7 +26,7 @@ def _slug(name: str) -> str:
 
 
 def create_device(*, name: str, type: str, model: str = "", site: str = "", ip: str = "",
-                  criticality: str = "medium", protocol: str = "rest", created_by: str = "",
+                  criticality: str = "unknown", protocol: str = "rest", created_by: str = "",
                   metadata: dict | None = None) -> dict:
     name = (name or "").strip()
     if not name:
@@ -41,6 +41,7 @@ def create_device(*, name: str, type: str, model: str = "", site: str = "", ip: 
         "model": model.strip(), "site": site.strip(), "ip": ip.strip(),
         "criticality": criticality, "protocol": protocol, "status": "configuring",
         "created_by": created_by, "created_at": _now(), "metadata": metadata or {},
+        "telemetry_mode": "unconfigured",
     }
     datastore.set_doc(_DEVICES, device_id, record)
     return record

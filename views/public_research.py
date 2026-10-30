@@ -76,13 +76,13 @@ def render() -> None:
         return
     device_id = device["id"]
     st.caption("The device selection associates the packet locally; it does not populate outbound fields.")
-    product = st.text_input("Public manufacturer and model", placeholder="Eaton 5PX UPS", key="research_product")
-    symptom = st.text_input("Public symptom or fault category", placeholder="battery alarm", key="research_symptom")
+    product = st.text_input("Public manufacturer and model", placeholder="Enter the public product name", key="research_product")
+    symptom = st.text_input("Public symptom or fault category", placeholder="Enter a public symptom", key="research_symptom")
     domains = st.text_input("Approved public source domains (comma-separated)",
-                           value="eaton.com", key="research_domains")
+                           value="", key="research_domains")
     discover = st.checkbox("Discover official documentation using Tavily Map", key="research_map_enabled")
     root = st.text_input("Public documentation starting URL (HTTPS, no query parameters)",
-                         placeholder="https://www.eaton.com/us/en-us/support.html",
+                         placeholder="https://manufacturer.example/support",
                          key="research_map_url") if discover else ""
     plan = None
     if product.strip() and symptom.strip():

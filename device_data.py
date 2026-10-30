@@ -1,6 +1,6 @@
 """Per-device telemetry dataset storage and synthetic generation.
 
-A device is analyzed in one of two modes:
+A device starts unconfigured and can explicitly select:
   * "synthetic": the built-in PRISM power simulator (full auto-remediation demo).
   * "dataset":   an uploaded or live-captured FleetDataset (observation-only).
 
@@ -48,16 +48,16 @@ def _local_file(device_id: str) -> Path:
     return base / "telemetry" / f"{safe}.json"
 
 
-def set_dataset(device_id: str, dataset: FleetDataset) -> None:
+def set_dataset(device_id: str, dataset: FleetDataset, *, demo_profile: bool = False) -> None:
     payload = dataset.model_dump_json()
     if _use_gcs():
         _gcs_blob(device_id).upload_from_string(payload, content_type="application/json")
-        datastore.set_doc(devices.telemetry_path(device_id), "current", {"location": "gcs"})
+        datastore.set_doc(devices.telemetry_path(device_id), "current", {"location": "gcs", "demo_profile": demo_profile})
     else:
         path = _local_file(device_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(payload, encoding="utf-8")
-        datastore.set_doc(devices.telemetry_path(device_id), "current", {"location": "file"})
+        datastore.set_doc(devices.telemetry_path(device_id), "current", {"location": "file", "demo_profile": demo_profile})
     devices.update_device(device_id, {"telemetry_mode": "dataset", "status": "ready"})
 
 
@@ -83,17 +83,26 @@ def clear_dataset(device_id: str) -> None:
     path = _local_file(device_id)
     if path.exists():
         path.unlink()
-    devices.update_device(device_id, {"telemetry_mode": "synthetic"})
+    devices.update_device(device_id, {"telemetry_mode": "unconfigured"})
 
 
 def set_synthetic(device_id: str) -> None:
-    clear_dataset(device_id)
     devices.update_device(device_id, {"telemetry_mode": "synthetic", "status": "ready"})
 
 
 def mode(device_id: str) -> str:
     device = devices.get_device(device_id) or {}
-    return device.get("telemetry_mode", "synthetic")
+    return device.get("telemetry_mode", "unconfigured")
+
+
+def uses_demo_profile(device_id: str) -> bool:
+    if mode(device_id) == "synthetic":
+        return True
+    record = datastore.get_doc(devices.telemetry_path(device_id), "current") or {}
+    if "demo_profile" in record:
+        return record["demo_profile"] is True
+    device = devices.get_device(device_id) or {}
+    return bool((device.get("metadata") or {}).get("demo"))
 
 
 def build_prism_demo_dataset() -> FleetDataset:

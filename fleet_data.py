@@ -34,7 +34,7 @@ class Reading(Contract):
     timestamp: datetime
     asset_id: str = Field(min_length=1, max_length=80)
     metrics: dict[str, float]
-    event_codes: list[str] = Field(default_factory=lambda: ["OK"], max_length=30)
+    event_codes: list[str] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
     def validate_reading(self):
@@ -94,8 +94,6 @@ class FleetDataset(Contract):
             replay = [row for row in self.telemetry if row.asset_id == asset.id]
             if len(history) < 20:
                 raise ValueError(f"{asset.id} needs at least 20 known-healthy history readings.")
-            if any(code not in BENIGN_CODES for row in history for code in row.event_codes):
-                raise ValueError(f"{asset.id}: healthy history contains fault/unknown codes.")
             features = set(history[0].metrics)
             if any(set(row.metrics) != features for row in history + replay):
                 raise ValueError(f"{asset.id}: metric columns must remain consistent across history and replay.")
@@ -148,7 +146,7 @@ def load_csv(text: str) -> FleetDataset:
                 raise ValueError("Asset metadata changed between rows.")
             assets[asset["id"]] = asset
             reading = {"timestamp": row["timestamp"], "asset_id": row["asset_id"],
-                       "event_codes": [code.strip() for code in row["event_codes"].split("|") if code.strip()] or ["OK"],
+                       "event_codes": [code.strip() for code in row["event_codes"].split("|") if code.strip()],
                        "metrics": {key: float(row[key]) for key in features if row[key] != ""}}
             if row["phase"] == "history":
                 history.append(reading)

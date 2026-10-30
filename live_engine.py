@@ -32,8 +32,14 @@ class LiveFleetEngine:
     """Warm up on healthy readings, then stream readings through PRISM."""
 
     def __init__(self, *, asset_id: str, criticality: str = "medium", offline: bool = False,
-                 warmup: int = 20):
+                 warmup: int = 20, device_id: str | None = None, asset_type: str = "GENERIC",
+                 demo_profile: bool = False, baseline_confirmed: bool = False):
+        if not demo_profile and not baseline_confirmed:
+            raise ValueError("Confirm that the live warmup readings are an acceptable baseline before deep analysis.")
         self.asset_id = asset_id
+        self.device_id = device_id
+        self.asset_type = asset_type
+        self.demo_profile = demo_profile
         self.criticality = criticality
         self.offline = offline
         self.warmup = max(20, warmup)
@@ -48,7 +54,11 @@ class LiveFleetEngine:
     def _clean_metrics(self, metrics: dict) -> dict[str, float]:
         numeric = {k: float(v) for k, v in (metrics or {}).items() if isinstance(v, (int, float))}
         if self._features is None:
-            self._features = sorted(numeric) or ["value"]
+            if not numeric:
+                raise ValueError("The live reading contains no numeric metrics; configure the value paths and encoding.")
+            self._features = sorted(numeric)
+        if not self.demo_profile and set(numeric) != set(self._features):
+            raise ValueError("Live metric fields changed or are missing. Reconfigure and restart baseline training.")
         # Hold the column set constant: carry forward any missing metric.
         out = {}
         for key in self._features:
@@ -60,8 +70,10 @@ class LiveFleetEngine:
         return out
 
     def _frame(self, metrics: dict[str, float], codes: list[str]) -> dict:
-        primary = next((c for c in codes if c in prism_config.CODE_TO_FAULT), codes[0] if codes else "OK")
-        return {self.asset_id: {"metrics": dict(metrics), "codes": list(codes) or ["OK"],
+        primary = (next((c for c in codes if c in prism_config.CODE_TO_FAULT), codes[0] if codes else "OK")
+                   if self.demo_profile else (codes[0] if codes else ""))
+        return {self.asset_id: {"metrics": dict(metrics),
+                                "codes": (list(codes) or ["OK"]) if self.demo_profile else list(codes),
                                 "primary_code": primary}}
 
     def _monotonic_ts(self, ts: datetime.datetime) -> datetime.datetime:
@@ -79,9 +91,9 @@ class LiveFleetEngine:
         ts = self._monotonic_ts(_parse_ts(reading.get("timestamp") or datetime.datetime.now(datetime.timezone.utc)))
 
         if self.engine is None:
-            # Warmup assumes a healthy baseline (only benign codes kept for training).
             self._warmup_readings.append(Reading(timestamp=ts, asset_id=self.asset_id,
-                                                 metrics=metrics, event_codes=["OK"]))
+                                                 metrics=metrics,
+                                                 event_codes=["OK"] if self.demo_profile else codes))
             if len(self._warmup_readings) >= self.warmup + 1:
                 self._build_engine()
                 self.status = "live"
@@ -97,12 +109,14 @@ class LiveFleetEngine:
     def _build_engine(self) -> None:
         history = self._warmup_readings[:-1]
         first = self._warmup_readings[-1]
-        asset = FleetAsset(id=self.asset_id, name=self.asset_id, type="METER",
-                           criticality=self.criticality.lower(), site="LIVE", rated_kw=100.0)
+        asset = FleetAsset(id=self.asset_id, name=self.asset_id, type=self.asset_type,
+                           criticality=self.criticality.lower(), site="LIVE")
         dataset = FleetDataset(source="uploaded", assets=[asset], history=history, telemetry=[first])
-        self.engine = Engine(offline=self.offline, dataset=dataset)
+        self.engine = Engine(offline=self.offline, dataset=dataset, device_id=self.device_id,
+                             demo_profile=self.demo_profile)
         # Live monitoring credits estimated early-detection value (accuracy stays n/a).
-        self.engine.credit_value = True
+        self.engine.credit_value = self.demo_profile
+        self.engine.tick()
 
     def summary(self) -> dict | None:
         return self.engine.summary() if self.engine else None

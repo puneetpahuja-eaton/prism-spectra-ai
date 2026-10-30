@@ -35,14 +35,15 @@ def _breach(value: float, limits: dict | None) -> tuple[bool, str]:
 
 
 class LiveMonitor:
-    def __init__(self, *, criticality: str = "medium", z_threshold: float = 4.0,
-                 downtime_min_per_issue: float = 12.0, cost_per_min: float = 50.0, window: int = 40,
-                 thresholds: dict | None = None, escalate_after: int = 3):
+    def __init__(self, *, criticality: str = "unknown", z_threshold: float = 4.0,
+                 downtime_min_per_issue: float = 0.0, cost_per_min: float = 0.0, window: int = 40,
+                 thresholds: dict | None = None, escalate_after: int = 3, demo_profile: bool = False):
         self.criticality = criticality
         self.z_threshold = z_threshold
         self.downtime_min = downtime_min_per_issue
         self.cost_per_min = cost_per_min
         self.thresholds = thresholds or {}  # {metric_label: {lower, upper, label}}
+        self.hard_codes = _HARD_CODES if demo_profile else set()
         self.escalate_after = escalate_after
         self.windows: dict[str, deque] = defaultdict(lambda: deque(maxlen=window))
         self.issues: list[dict] = []
@@ -75,15 +76,15 @@ class LiveMonitor:
                 anomalous, detail = True, reason
             elif z >= self.z_threshold:
                 anomalous, detail = True, f"statistical anomaly (robust-z {z:.1f})"
-            elif codes & _HARD_CODES:
+            elif codes & self.hard_codes:
                 anomalous, detail = True, "critical event code"
             else:
                 anomalous, detail = False, ""
 
             open_issue = self._open_by_metric.get(metric)
             if anomalous and not open_issue:
-                hard = bool(codes & _HARD_CODES)
-                escalate = hard or self.criticality in ("high", "critical")
+                hard = bool(codes & self.hard_codes)
+                escalate = hard or self.criticality in ("high", "critical", "unknown")
                 label = (limits or {}).get("label") if limits else None
                 issue = {
                     "metric": metric, "label": label or metric, "value": round(value, 4),

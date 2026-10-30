@@ -54,7 +54,7 @@ def home() -> None:
     if all_devices:
         st.subheader("Devices")
         st.dataframe([{"id": d["id"], "name": d["name"], "type": d["type"], "site": d.get("site", ""),
-                       "status": d.get("status", ""), "mode": d.get("telemetry_mode", "synthetic")}
+                       "status": d.get("status", ""), "mode": d.get("telemetry_mode", "unconfigured")}
                       for d in all_devices], hide_index=True, width="stretch")
     else:
         st.info("No devices yet." + (" Add one in **Device Manager**." if user["role"] == "admin"

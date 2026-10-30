@@ -211,7 +211,7 @@ class RagTests(PlatformTestBase):
         self.assertEqual(len(result["artifacts"]), 1)
         self.assertEqual(result["artifacts"][0]["lang"], "csv")
 
-    def test_converse_does_not_reask_after_user_defers(self):
+    def test_converse_keeps_missing_device_facts_after_user_defers(self):
         device = devices.create_device(name="Meter", type="METER")
         ingest.ingest_text(device["id"], name="doc", kind="document", text="voltage info " * 40)
         history = [
@@ -219,14 +219,13 @@ class RagTests(PlatformTestBase):
             {"role": "assistant", "content": "Which phase?", "needs_clarification": True},
             {"role": "user", "content": "you decide"},
         ]
-        # Even if the model tries to clarify again, the anti-loop safety net forces proceeding.
         fake = {"needs_clarification": True, "clarifying_questions": ["Which phase again?"],
                 "awaiting_confirmation": False,
                 "answer": "Here is the dataset.\n```csv\nts,v,i\n1,230,5\n2,231,5\n3,229,5\n4,230,5\n```"}
         with patch("rag.is_live", return_value=True), patch("rag.generate_json", return_value=fake):
             result = rag.converse(device["id"], "you decide", mode="agent", history=history)
-        self.assertFalse(result["needs_clarification"])
-        self.assertEqual(len(result["artifacts"]), 1)
+        self.assertTrue(result["needs_clarification"])
+        self.assertEqual(result["artifacts"], [])
 
     def test_extract_artifacts_from_fenced_blocks(self):
         text = ("Here is your dataset.\n```csv\ntimestamp,voltage,current\n2026-01-01,230,5\n"
@@ -271,10 +270,10 @@ class LiveMonitorTests(PlatformTestBase):
             monitor.observe({"metrics": {"temperature_c": 35.0}, "codes": ["OK"]})
         summary = monitor.summary()
         self.assertEqual(summary["auto_resolved"], 1)
-        self.assertGreater(summary["cost_avoided_usd"], 0)
+        self.assertEqual(summary["cost_avoided_usd"], 0)
 
     def test_hard_code_forces_escalation(self):
-        monitor = LiveMonitor(criticality="low")
+        monitor = LiveMonitor(criticality="low", demo_profile=True)
         for _ in range(10):
             monitor.observe({"metrics": {"load_pct": 60.0}, "codes": ["OK"]})
         monitor.observe({"metrics": {"load_pct": 61.0}, "codes": ["BREAKER_OPEN"]})
@@ -293,7 +292,7 @@ class LiveMonitorTests(PlatformTestBase):
         monitor.observe({"metrics": {"p22120": 231.0}})  # back within limits
         summary = monitor.summary()
         self.assertEqual(summary["auto_resolved"], 1)
-        self.assertGreater(summary["cost_avoided_usd"], 0)
+        self.assertEqual(summary["cost_avoided_usd"], 0)
 
     def test_persistent_breach_escalates(self):
         monitor = LiveMonitor(criticality="low", escalate_after=3,
@@ -396,7 +395,8 @@ class LiveAdapterTests(PlatformTestBase):
 
         with patch("live.rest_adapter.requests.get",
                    return_value=FakeResponse({"pid": 22120, "value": "0x0000000A,0x00000000,0x000000FF"})):
-            reading = rest_adapter.poll("rest", {"endpoint": "https://x/api/telemetry", "auth_mode": "none"})
+            reading = rest_adapter.poll("rest", {"endpoint": "https://x/api/telemetry", "auth_mode": "none",
+                                                 "hex_as_float": False})
         self.assertEqual(reading["metrics"]["value.0"], 10.0)
         self.assertEqual(reading["metrics"]["value.2"], 255.0)
 
@@ -446,7 +446,8 @@ class LiveAdapterTests(PlatformTestBase):
 
         with patch("live.rest_adapter.requests.get", side_effect=fake_get):
             reading = rest_adapter.poll("rest", {"endpoint": "https://x/rs/param/22120/value",
-                                                 "auth_mode": "none", "param_ids": ["22120", "22121"]})
+                                                 "auth_mode": "none", "param_ids": ["22120", "22121"],
+                                                 "hex_as_float": False})
         self.assertEqual(reading["metrics"]["p22120"], 10.0)
         self.assertEqual(reading["metrics"]["p22121"], 20.0)
         # The echoed pid field is NOT tracked — only value.
@@ -527,11 +528,12 @@ class LiveAdapterTests(PlatformTestBase):
 
 
 class InferenceAndIntegrationParsers(PlatformTestBase):
-    def test_offline_field_map_heuristic(self):
+    def test_offline_field_map_reports_unavailable_without_heuristic(self):
         device = devices.create_device(name="M", type="METER")
         sample = json.dumps({"data": {"voltage_v": 480, "current_a": 12.0, "note": "x"}})
-        result = suggest_field_map(device["id"], sample)
-        self.assertEqual(result["field_map"].get("voltage_v"), "data.voltage_v")
+        from gemini_client import ModelUnavailable
+        with self.assertRaises(ModelUnavailable):
+            suggest_field_map(device["id"], sample)
 
     def test_github_parse_repo(self):
         self.assertEqual(github.parse_repo("https://github.com/eaton/prism.git"), ("eaton", "prism"))
@@ -591,7 +593,7 @@ class DeviceDataTests(PlatformTestBase):
         self.assertEqual(len(loaded.assets), len(dataset.assets))
         device_data.set_synthetic(device["id"])
         self.assertEqual(device_data.mode(device["id"]), "synthetic")
-        self.assertIsNone(device_data.get_dataset(device["id"]))
+        self.assertEqual(len(device_data.get_dataset(device["id"]).telemetry), len(dataset.telemetry))
 
 
 def _fake_repo_ingest(device_id, ref, branch, link_id=None, on_progress=None):
@@ -714,6 +716,7 @@ class DatasetGenTests(PlatformTestBase):
     def test_build_dataset_from_spec_is_valid_and_has_anomaly(self):
         import dataset_gen
         spec = dataset_gen.DatasetSpec.model_validate({
+            "profile": "power-demo",
             "assets": [{"id": "METER-1", "type": "METER", "criticality": "high",
                         "metrics": [{"name": "voltage_a_v", "unit": "V", "normal_min": 228, "normal_max": 232},
                                     {"name": "current_a_a", "unit": "A", "normal_min": 10, "normal_max": 90}]}],
@@ -740,6 +743,7 @@ class DatasetGenTests(PlatformTestBase):
                  ("apparent_power_total", "VA", 0, 65000), ("power_factor_total", "", 0.88, 0.96),
                  ("active_energy_total_kwh", "kWh", 0, 1e9)]
         spec = dataset_gen.DatasetSpec.model_validate({
+            "profile": "power-demo",
             "assets": [{"id": "M1", "type": "METER", "criticality": "high",
                         "metrics": [{"name": n, "unit": u, "normal_min": lo, "normal_max": hi}
                                     for n, u, lo, hi in names]}],
@@ -761,7 +765,7 @@ class LiveEngineTests(PlatformTestBase):
     def test_live_engine_warms_up_then_detects(self):
         import datetime
         from live_engine import LiveFleetEngine
-        eng = LiveFleetEngine(asset_id="METER-1", criticality="high", offline=True, warmup=20)
+        eng = LiveFleetEngine(asset_id="METER-1", criticality="high", offline=True, warmup=20, demo_profile=True)
         base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
         out = {}
         for i in range(21):
@@ -781,7 +785,7 @@ class LiveEngineTests(PlatformTestBase):
     def test_live_engine_carries_forward_missing_metric(self):
         import datetime
         from live_engine import LiveFleetEngine
-        eng = LiveFleetEngine(asset_id="M", offline=True, warmup=20)
+        eng = LiveFleetEngine(asset_id="M", offline=True, warmup=20, demo_profile=True)
         base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
         for i in range(21):
             eng.observe({"timestamp": (base + datetime.timedelta(minutes=5 * i)).isoformat(),
@@ -823,7 +827,7 @@ class EventLogDecodeTests(PlatformTestBase):
         config = {"endpoint": "https://x/rs/param/22120/value", "auth_mode": "none",
                   "event_log": {"pid": "40010", "word_index": 2, "code_map": {"0x0001": "VOLT_SAG"}}}
         with patch("live.rest_adapter.requests.get", return_value=FakeResponse()):
-            self.assertEqual(rest_adapter.decode_event_log(config), [])
+            self.assertEqual(rest_adapter.decode_event_log(config), ["UNMAPPED_EVENT:0x00000099"])
 
 
 class MonitorGenTests(PlatformTestBase):
@@ -840,18 +844,20 @@ class MonitorGenTests(PlatformTestBase):
         self.assertEqual(cfg["monitored"][1]["path"], "data.v")
         self.assertEqual(cfg["event_log"]["pid"], "40010")
 
-    def test_generate_plan_parses_text_json(self):
+    def test_generate_plan_uses_structured_json(self):
         import monitor_gen
-        text = ('```json\n{"poll_interval_s": 60, "hex_as_float": true, '
-                '"params": [{"pid": "700", "label": "Va", "unit": "V", "lower": 210, "upper": 250}], '
+        text = ('```json\n{"poll_interval_s": 60, "hex_as_float": null, '
+                '"params": [{"pid": "700", "label": "Va", "unit": "V", "lower": 210, "upper": 250, '
+                '"evidence": "Parameter 700 Va unit V limits 210 to 250."}], '
                 '"event_log": null, "notes": "ok"}\n```')
         with patch("monitor_gen.is_live", return_value=True), \
-             patch("monitor_gen.rag.retrieve", return_value=[]), \
-             patch("monitor_gen.generate_text", return_value=text):
+             patch("monitor_gen.rag.retrieve", return_value=[{"text": "Parameter 700 Va unit V limits 210 to 250."}]), \
+             patch("monitor_gen.generate_json", return_value=json.loads(text.split("```json\n")[1].split("\n```")[0])) as generate:
             plan = monitor_gen.generate_plan("dev", "monitor Va every minute")
         self.assertEqual(plan["poll_interval_s"], 60)
         self.assertEqual(plan["params"][0]["pid"], "700")
         self.assertIsNone(plan["event_log"])
+        self.assertIs(generate.call_args.args[1], monitor_gen.MonitorPlan)
 
 
 class MetricsFixTests(PlatformTestBase):
@@ -864,6 +870,7 @@ class MetricsFixTests(PlatformTestBase):
                  ("active_power_total", "W", 0, 60000), ("apparent_power_total", "VA", 0, 65000),
                  ("power_factor_total", "", 0.88, 0.96), ("active_energy_total_kwh", "kWh", 0, 1e9)]
         spec = dataset_gen.DatasetSpec.model_validate({
+            "profile": "power-demo",
             "assets": [{"id": "METER-1", "type": "METER", "criticality": "high",
                         "metrics": [{"name": n, "unit": u, "normal_min": lo, "normal_max": hi}
                                     for n, u, lo, hi in names]}],
@@ -872,7 +879,7 @@ class MetricsFixTests(PlatformTestBase):
                            "kind": "sag", "severity": 0.8}]})
         dataset = dataset_gen.build_dataset(spec)
         self.assertTrue(dataset.scenarios)  # ground truth attached
-        engine = Engine(offline=True, dataset=dataset)
+        engine = Engine(offline=True, dataset=dataset, demo_profile=True)
         self.assertTrue(engine.labeled)
         engine.run_all()
         summary = engine.summary()
@@ -907,17 +914,20 @@ class MetricsFixTests(PlatformTestBase):
         self.assertLessEqual(len(dataset.history), 20_000)
         self.assertLessEqual(len(dataset.telemetry), 10_000)
 
-    def test_generate_spec_parses_text_json(self):
+    def test_generate_spec_uses_structured_json(self):
         import dataset_gen
         model_text = ("Here is the spec:\n```json\n{\"assets\": [{\"id\": \"M1\", \"type\": \"METER\", "
                       "\"criticality\": \"high\", \"metrics\": [{\"name\": \"v_a\", \"unit\": \"V\", "
-                      "\"normal_min\": 220, \"normal_max\": 240}]}], \"sample_interval_min\": 5, "
+                      "\"normal_min\": 220, \"normal_max\": 240, \"evidence\": \"v_a V range 220 to 240.\"}]}], \"sample_interval_min\": 5, "
                       "\"duration_days\": 3, \"history_days\": 1, \"anomalies\": []}\n```")
         with patch("dataset_gen.is_live", return_value=True), \
-             patch("dataset_gen.generate_text", return_value=model_text):
-            spec = dataset_gen.generate_spec("ctx", "make a dataset")
+             patch("dataset_gen.generate_json", return_value={
+                 "spec": json.loads(model_text.split("```json\n")[1].split("\n```")[0])}) as generate:
+            spec = dataset_gen.generate_spec("Device type METER criticality high. v_a V range 220 to 240.",
+                                              "make a dataset")
         self.assertEqual(spec["assets"][0]["id"], "M1")
         self.assertEqual(spec["duration_days"], 3)
+        self.assertIs(generate.call_args.args[1], dataset_gen.DatasetDraft)
         dataset = dataset_gen.build_dataset(dataset_gen.DatasetSpec.model_validate(spec))
         self.assertGreaterEqual(len(dataset.history), 20)
 

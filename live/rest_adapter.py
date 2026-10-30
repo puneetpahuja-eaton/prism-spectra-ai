@@ -44,7 +44,7 @@ def _parse_hex_word(token: str, hex_float: bool) -> float:
     return float(raw)
 
 
-def _coerce_numbers(prefix: str, value: Any, hex_float: bool = False) -> dict[str, float]:
+def _coerce_numbers(prefix: str, value: Any, hex_float: bool | None = None) -> dict[str, float]:
     """Collect numeric leaves, parsing plain numbers, numeric strings and hex words.
 
     Device params often encode the value as comma-separated 32-bit hex words, e.g.
@@ -74,6 +74,8 @@ def _coerce_numbers(prefix: str, value: Any, hex_float: bool = False) -> dict[st
         for token in tokens:
             try:
                 if token.lower().startswith("0x"):
+                    if hex_float is None:
+                        raise RuntimeError("Hex data requires an explicit encoding choice from the device docs or user guidance.")
                     parsed.append(_parse_hex_word(token, hex_float))
                 else:
                     parsed.append(float(token))
@@ -87,7 +89,7 @@ def _coerce_numbers(prefix: str, value: Any, hex_float: bool = False) -> dict[st
     return found
 
 
-def _flatten_numbers(payload: Any, prefix: str = "", hex_float: bool = False) -> dict[str, float]:
+def _flatten_numbers(payload: Any, prefix: str = "", hex_float: bool | None = None) -> dict[str, float]:
     return _coerce_numbers(prefix, payload, hex_float)
 
 
@@ -148,14 +150,19 @@ def poll_rest(config: dict) -> dict:
                 pass
 
     metrics: dict[str, float] = {}
-    hex_float = bool(config.get("hex_as_float"))
+    hex_float = config.get("hex_as_float")
     field_map = config.get("field_map") or {}
     if field_map:
         for metric, path in field_map.items():
-            metrics.update(_coerce_numbers(metric, _dig(payload, path), hex_float))
+            extracted = _coerce_numbers(metric, _dig(payload, path), hex_float)
+            if not extracted:
+                raise ValueError(f"No numeric value at configured device path {path!r}. Check the response and decoding.")
+            metrics.update(extracted)
     else:
         # No explicit mapping yet: auto-discover numeric values so the feed isn't empty.
         metrics = _coerce_numbers("", payload, hex_float)
+    if not metrics:
+        raise ValueError("No numeric device values found. Supply value paths and decoding rules.")
     codes = []
     if config.get("event_path"):
         raw_codes = _dig(payload, config["event_path"])
@@ -228,24 +235,21 @@ def decode_event_log(config: dict) -> list[str]:
     if not pid or not _PARAM_URL.search(endpoint):
         return []
     url = _PARAM_URL.sub(lambda m: f"{m.group(1)}{pid}{m.group(3)}", endpoint)
-    try:
-        reading = poll_rest({**config, "endpoint": url, "field_map": None, "param_ids": None})
-    except Exception:  # noqa: BLE001 - event log is best-effort; never break the main poll
-        return []
+    reading = poll_rest({**config, "endpoint": url, "field_map": None, "param_ids": None, "hex_as_float": False})
     raw = reading.get("raw")
     # Extract the raw hex-word string from the response value.
     value = raw.get("value") if isinstance(raw, dict) else raw
     if not isinstance(value, str):
-        return []
+        raise ValueError("Configured event log is not a word string. Supply the actual layout and value path.")
     words = [w.strip() for w in value.split(",") if w.strip()]
     word_index = int(spec.get("word_index", -1))
     if word_index < 0 or word_index >= len(words):
-        return []
+        raise ValueError("Configured event-log word index is absent from the response. Review the supplied layout.")
     token = words[word_index]
     try:
         raw_int = int(token, 16) if token.lower().startswith("0x") else int(token)
-    except ValueError:
-        return []
+    except ValueError as error:
+        raise ValueError("Configured event code is not an integer word. Review the device encoding.") from error
     code_map = spec.get("code_map") or {}
     # Match the code by decimal or normalized-hex key.
     for key, name in code_map.items():
@@ -255,7 +259,7 @@ def decode_event_log(config: dict) -> list[str]:
             continue
         if key_int == raw_int and name:
             return [name]
-    return []
+    return [f"UNMAPPED_EVENT:{token}"]
 
 
 def poll(protocol: str, config: dict) -> dict:

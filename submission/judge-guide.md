@@ -20,15 +20,18 @@ inference may take time; wait for the page to finish before clicking again.
    escalation?" A small, explicitly synthetic knowledge corpus is pre-indexed.
    The answer should include source references. Plan and Agent modes use the
    same device-scoped assistant for plans and synthetic artifact generation.
-3. **Live Monitoring:** leave the built-in simulated feed enabled and click
-   Start. Observe changing readings, then click Stop. This exercises the live
+3. **Live Monitoring:** explicitly select the demo device, enable **Use built-in
+   simulated feed**, then click Start. Observe changing readings, then click Stop. This exercises the live
    polling engine, not a physical device. Authorized REST sources can be
    configured separately; there is no real equipment control.
-4. **Analysis:** use the bundled synthetic dataset and replay controls to
+4. **Analysis:** explicitly select the demo device. If its local demo file is
+   unavailable on this cloud instance, click **Load synthetic demo fixture for
+   this session**; stored device data is not replaced. Use the synthetic replay controls to
    inspect Monitor, Diagnose, Decide, Act and Verify. Read model provenance,
    escalation state, evidence and assumptions rather than interpreting demo
    outcomes as measured industrial accuracy.
-5. **Public Research:** enter public product `Eaton 5PX UPS`, symptom
+5. **Public Research:** select the demo device. The public fields have no
+   manufacturer/domain defaults. For this optional public-only example, enter product `Eaton 5PX UPS`, symptom
    `battery alarm`, and approved domain `eaton.com`. Enable Map with starting
    URL `https://www.eaton.com/us/en-us/support.html`. Review the outbound
    preview, consent, and click Research public evidence.
@@ -52,6 +55,9 @@ not production efficacy or award claims.
 
 - Use only synthetic or public data; do not upload private employer material.
 - Private device records are not automatically used as public web queries.
+- New devices have no simulator, device-specific defaults or assumed event-code
+  meanings. Supply their own authorized code/docs and explicit guidance. User-device
+  Analysis is source-only and review-only, with no assumed economic benefit.
 - Source passage membership does not establish truth or model applicability.
 - Automatic equipment recovery is simulated. Real equipment commands and
   external engineer notifications are not implemented.

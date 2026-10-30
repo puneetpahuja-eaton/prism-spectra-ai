@@ -19,8 +19,9 @@ from gemini_client import ModelUnavailable
 
 _QUICK_ACTIONS = {
     "📊 Historic dataset": "Create a small synthetic historic dataset (CSV) of the key measured parameters "
-                           "for this device (e.g. voltage and current per phase) over about 24 five-minute "
-                           "samples, with a realistic daily pattern and one labelled anomaly. Return it as a "
+                           "documented for this device, using only supplied names, units and ranges, over about 24 five-minute "
+                           "illustrative independent samples and one labelled synthetic anomaly. Do not invent "
+                           "physical relationships or daily periodicity. Return it as a "
                            "```csv block with a header row, and briefly describe the schema. For a larger, "
                            "loadable dataset, tell the user to use 'Build a dataset for Analysis' above.",
     "🧪 Test cases": "Generate a set of test cases for this device's key behaviours and alarm/threshold "
@@ -29,13 +30,14 @@ _QUICK_ACTIONS = {
     "📝 Summary": "Summarise what you know about this device from the ingested documentation: its purpose, "
                  "key parameters, alarms and important operations. Cite the sources you used.",
     "🔧 Monitoring plan": "Propose a live-monitoring plan for this device: which parameters to watch, "
-                         "suggested lower/upper thresholds with units, and why. Return a ```markdown table.",
+                         "documented or explicitly supplied lower/upper thresholds with units, and why. "
+                         "Ask for missing limits. Return a ```markdown table.",
 }
 
 
 def _screen_context(device_id: str) -> str:
     engine = st.session_state.get("engine")
-    if not engine or st.session_state.get("prism_device") != device_id:
+    if not engine or engine.demo_profile or st.session_state.get("prism_device") != device_id:
         return ""
     try:
         cases = [c for c in engine.audit().get("cases", [])][:6]
@@ -85,7 +87,7 @@ def _run_assistant(device_id: str, prompt: str, history_key: str, mode: str) -> 
 
 
 def _dataset_context(device_id: str) -> str:
-    chunks = rag.retrieve(device_id, "measured parameters metrics units ranges voltage current power energy", top_k=16)
+    chunks = rag.retrieve(device_id, "documented parameters metrics units ranges identifiers", top_k=16)
     return "\n\n".join(c.get("text", "")[:900] for c in chunks)
 
 
@@ -98,10 +100,9 @@ def _dataset_builder(device_id: str) -> None:
         ref_key = f"ds_ref_{device_id}"
         req_key = f"ds_req_{device_id}"
         request = st.text_area("What dataset do you want?", key=req_key, height=90,
-                               placeholder="e.g. metering dataset with per-phase voltages, currents, active/"
-                                           "reactive/apparent power and energies")
+                               placeholder="Specify documented metrics and units, synthetic ranges, assets and anomaly examples.")
         ref_path = st.text_input("Reference a repo file for parameters (optional path)", key=ref_key,
-                                 placeholder="source/Tools/RTK DCI DB Creator.xlsm",
+                                 placeholder="docs/parameters.csv",
                                  help="Pulled from this device's linked GitHub repo and used as the "
                                       "authoritative parameter list. Supports .xlsm/.xlsx/.csv/text.")
         span_cols = st.columns(2)
@@ -132,7 +133,8 @@ def _dataset_builder(device_id: str) -> None:
             with st.spinner("Loading reference, designing the dataset, and synthesizing..."):
                 try:
                     reference = _load_reference(device_id, ref_path)
-                    spec = dataset_gen.generate_spec(_dataset_context(device_id), request, reference,
+                    guided_request = request + f"\nUser-selected duration: {int(days)} days; sample interval: {int(interval_min)} minutes."
+                    spec = dataset_gen.generate_spec(_dataset_context(device_id), guided_request, reference,
                                                      st.session_state.get(f"ds_answers_{device_id}", ""))
                     # User-selected span and sampling rate are authoritative.
                     spec["duration_days"] = int(days)

@@ -32,8 +32,10 @@ No payment or personal API key is required from judges.
 - Provides a grounded Ask / Plan / Agent assistant for device questions,
   monitoring plans, test cases, and synthetic datasets.
 - Analyzes synthetic, uploaded, historical, or REST-polled telemetry.
-- Uses deterministic detection and safety policy around a Nemotron-generated,
-  SOP-grounded diagnosis. SOP citations are checked against the source text.
+- Uses statistical detection and source-grounded Nemotron interpretation for
+  user devices. Source citations are checked against supplied passages.
+- Keeps the original electrical SOP, fault mappings, physics and remediation
+  policy inside explicitly selected synthetic power demonstrations only.
 - Creates review-only work-order drafts or sandbox simulations; real equipment
   commands and external engineer notifications are not implemented.
 - Shows the selected model/provider and retains model provenance in case records.
@@ -44,7 +46,57 @@ The five labels describe an orchestrated workflow, not five independently
 trained or separately hosted AI models. Monitor, Decide, Act, and Verify use
 deterministic logic and safety gates; model reasoning is used for supported
 diagnosis and assistant-generation tasks. Downtime/cost figures are estimates
-based on disclosed assumptions, not measured production savings.
+based on disclosed demo assumptions, not measured production savings. User-device
+analysis does not apply the demo's fault meanings, control actions or assumed savings.
+
+## Device knowledge: supplied sources only
+
+New devices start **unconfigured**, not attached to the power simulator. Every
+page requires an explicit device selection. Real-device live monitoring defaults
+to **off** for simulation, with no endpoint or hex encoding preselected.
+
+1. Register your device with its supplied identity. Leave unknown facts unknown.
+2. In **Data Sources**, upload authorized device code/docs or use **Paste text /
+   explicit device guidance** to save your own facts for that device. Optional
+   GitHub/Confluence ingestion remains device-scoped.
+3. Supply the actual parameter names/IDs, units, numeric ranges, alarm limits,
+   response paths and decoding rules. The assistant asks about missing details
+   instead of choosing industry defaults. An unanswered clarification does not
+   authorize invented specifications.
+4. Generated monitoring parameters and dataset metrics must include a passage
+   from the supplied material containing their literal field values. Missing
+   or unverifiable passages are rejected. Review a monitoring plan before applying
+   it. Source membership checks do not prove semantic correctness.
+5. Generated user-device datasets use independent illustrative signals within
+   supplied ranges. They do not assume three phases, electrical relationships or
+   nominal frequency. Injected codes are labeled `SYNTHETIC_*`, not manufacturer
+   fault meanings. The recovery/escalation showcase requires at least eight replay
+   samples per asset.
+6. User-device Analysis uses supplied history as the user-declared baseline,
+   not a health certification. Unknown codes remain uninterpreted. Cases are
+   review-only; a return to baseline is observed recovery, not an automatic repair.
+   No downtime, cost savings or diagnosis accuracy is invented.
+7. For live deep analysis, explicitly confirm that the initial readings are an
+   acceptable baseline. Missing/changed fields and unknown hex encodings are
+   reported, not filled with guessed values. Simulated feed changes require restart.
+
+The AI is **not retrained** on your device. It retrieves the selected device's
+sources at runtime (RAG). User guidance in a conversation applies there; save
+guidance in Data Sources when it should be reused across pages and sessions.
+These safeguards reduce unsupported assumptions but do not guarantee that a
+language model cannot hallucinate; engineer review remains necessary.
+
+Existing uploaded knowledge, device records, credentials and stored telemetry
+are not purged or rewritten by this change. Switching to the simulator retains
+saved telemetry. Existing demonstration records remain available but are never
+automatically selected. If a cloud instance lacks a locally stored demo file,
+Analysis offers an explicit **Load synthetic demo fixture for this session**
+button without replacing stored records. Local files are not durable across
+Cloud Run instances; configure a private GCS bucket for persistent uploaded datasets.
+
+Tavily stays optional and separate: public product, symptom and approved domains
+start blank, require explicit input and consent, and are not promoted into
+private device truth or control instructions.
 
 ## Nebius Token Factory
 

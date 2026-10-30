@@ -15,14 +15,14 @@ def render() -> None:
     with st.expander("➕ Add a device", expanded=not devices.list_devices()):
         with st.form("add_device"):
             col1, col2 = st.columns(2)
-            name = col1.text_input("Name *", placeholder="Feeder Meter 12")
-            type_ = col2.text_input("Type", placeholder="POWER_METER / TRANSFORMER / UPS ...")
+            name = col1.text_input("Name *", placeholder="Your device name")
+            type_ = col2.text_input("Type", placeholder="Documented device type (optional)")
             col3, col4, col5 = st.columns(3)
-            model = col3.text_input("Model", placeholder="PXM-2000")
-            site = col4.text_input("Site", placeholder="DC-EAST")
-            ip = col5.text_input("IP address (if on field)", placeholder="10.0.0.42")
+            model = col3.text_input("Model", placeholder="Documented model (optional)")
+            site = col4.text_input("Site", placeholder="Your site (optional)")
+            ip = col5.text_input("IP address (if on field)", placeholder="Your device address (optional)")
             col6, col7 = st.columns(2)
-            criticality = col6.selectbox("Criticality", devices.CRITICALITIES, index=1)
+            criticality = col6.selectbox("Criticality", devices.CRITICALITIES, index=0)
             protocol = col7.selectbox("Live protocol", devices.PROTOCOLS, index=0,
                                       help="REST is enabled; Modbus and DLMS are disabled in this edition.")
             submitted = st.form_submit_button("Add device", type="primary")
@@ -54,7 +54,7 @@ def render() -> None:
             cols[2].write(f"Protocol: `{device['protocol']}`")
             cols[2].write(f"Criticality: {device['criticality']}")
             cols[3].write(f"Status: `{device.get('status', 'configuring')}`")
-            cols[3].write(f"Mode: {device.get('telemetry_mode', 'synthetic')}")
+            cols[3].write(f"Mode: {device.get('telemetry_mode', 'unconfigured')}")
             if cols[4].button("Delete", key=f"del_{device['id']}"):
                 devices.delete_device(device["id"])
                 st.rerun()

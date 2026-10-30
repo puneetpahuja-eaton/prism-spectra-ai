@@ -65,11 +65,10 @@ def _plan_builder(device: dict) -> None:
                    "resolve parameter IDs, polling interval, thresholds and the event-log decode. It asks "
                    "clarifying questions first — especially about how the event log is structured.")
         request = st.text_area("What should I monitor?", key=f"mp_req_{device_id}", height=90,
-                               placeholder="Monitor per-phase voltages and currents every 5 minutes, and "
-                                           "read the fault/event log; alarm if voltage leaves 210-250 V.")
+                               placeholder="Specify documented parameters, polling interval, limits and event-log layout.")
         ref_path = st.text_input("Reference a repo file for parameters (optional path)",
                                  key=f"mp_ref_{device_id}",
-                                 placeholder="source/Tools/Database/DCI Descriptors.json")
+                                 placeholder="docs/interface.json")
         cols = st.columns(3)
         if cols[0].button("❓ Ask clarifying questions", key=f"mp_ask_{device_id}", disabled=not request.strip()):
             with st.spinner("Reading docs and thinking..."):
@@ -108,10 +107,13 @@ def _plan_builder(device: dict) -> None:
             if plan.get("notes"):
                 st.caption(plan["notes"])
             current = _load_config(device_id)
-            default_ep = current.get("endpoint") or "https://10.130.178.92/rs/param/22120/value"
+            default_ep = current.get("endpoint") or ""
             endpoint = st.text_input("Base REST endpoint for these params", value=default_ep,
                                      key=f"mp_ep_{device_id}")
-            if st.button("➕ Apply to Live Monitoring", key=f"mp_apply_{device_id}"):
+            confirmed = st.checkbox("I verified the IDs, limits, units and encoding against this device's sources",
+                                     key=f"mp_review_{device_id}")
+            if st.button("➕ Apply to Live Monitoring", key=f"mp_apply_{device_id}",
+                          disabled=not confirmed or not endpoint.strip()):
                 cfg = _load_config(device_id)
                 cfg.update(monitor_gen.plan_to_config(plan, endpoint))
                 cfg["simulated"] = False
@@ -130,6 +132,9 @@ def _plan_reference(device_id: str, ref_path: str) -> str:
 
 def _render_prism_live(device_id: str, prism_key: str) -> None:
     """Render the live PRISM five-agent engine results (same engine as Analysis)."""
+    if st.session_state.get(f"live_prism_err_{device_id}"):
+        st.error("Deep analysis stopped: " + st.session_state[f"live_prism_err_{device_id}"])
+        return
     prism = st.session_state.get(prism_key)
     if prism is None:
         return
@@ -151,7 +156,7 @@ def _render_prism_live(device_id: str, prism_key: str) -> None:
     cols[3].metric("Diagnosis acc.", f"{acc * 100:.0f}%" if acc is not None else "n/a")
     cols[4].metric("Cost avoided (est.)", f"${summary.get('cost_avoided_usd', 0):,.0f}")
     st.caption(f"Downtime avoided (estimated): {summary.get('downtime_avoided_min', 0)} min · "
-               "live field data has no ground truth, so accuracy is n/a and value is an estimate.")
+               "live field data has no ground truth; no repair or economic benefit is inferred.")
     audit = prism.audit() or {}
     cases = audit.get("cases", [])
     if cases:
@@ -214,15 +219,16 @@ def _render_config(device: dict) -> dict:
                    "in this edition — only REST polling is available.")
 
     simulated = st.toggle("Use built-in simulated feed (no device needed)",
-                          value=config.get("simulated", True),
-                          help="Great for the demo. Turn off to poll a real REST endpoint.")
+                          value=config.get("simulated", False),
+                          help="Explicit synthetic power-demo opt-in. It is not evidence about the selected device.")
     endpoint = st.text_input("REST endpoint (base — the param ID in the path is the template)",
                              value=config.get("endpoint", ""), disabled=simulated,
-                             placeholder="https://10.130.178.92/rs/param/22120/value")
-    hex_as_float = st.selectbox(
-        "Hex value format", ["IEEE-754 float (32-bit)", "Unsigned integer"],
-        index=0 if config.get("hex_as_float", True) else 1, disabled=simulated,
-        help="How to decode 0x.. hex words. Eaton meter params are IEEE-754 floats.") == "IEEE-754 float (32-bit)"
+                             placeholder="https://device.example/your-documented-api")
+    encoding = st.selectbox(
+        "Hex value format", ["Unknown / numeric values only", "IEEE-754 float (32-bit)", "Unsigned integer"],
+        index={None: 0, True: 1, False: 2}[config.get("hex_as_float")], disabled=simulated,
+        help="Select only from your device code/docs or explicit guidance. Unknown hex data is rejected, not guessed.")
+    hex_as_float = {"IEEE-754 float (32-bit)": True, "Unsigned integer": False}.get(encoding)
 
     # Monitored parameters: a clean inline table (add rows, edit, delete) — no cluttered buttons.
     monitored = _monitored_list(config)
@@ -281,7 +287,7 @@ def _render_config(device: dict) -> dict:
                                index=auth_modes.index(config.get("auth_mode", "none"))
                                if config.get("auth_mode", "none") in auth_modes else 0,
                                disabled=simulated,
-                               help="Many embedded meter web servers use Digest auth, not Basic.")
+                               help="Select the authentication scheme documented for this device.")
     username = col2.text_input("Username", disabled=simulated or auth_mode not in ("basic", "digest"))
     password = col3.text_input("Password / token", type="password",
                                disabled=simulated or auth_mode == "none")
@@ -303,6 +309,8 @@ def _render_config(device: dict) -> dict:
             st.warning("TLS verification is OFF for this device. Use only on a trusted private network.")
 
     field_map = config.get("field_map", {})
+    if not rest_adapter._PARAM_URL.search(endpoint) and monitored and all(m.get("path") for m in monitored):
+        field_map = {f"p{m['pid']}": m["path"] for m in monitored}
     with st.expander("🤖 Advanced: agent field mapping (for non-/rs/param endpoints)"):
         st.caption("Optional. For a generic endpoint, paste a sample response and let the agent map fields "
                    "from the datasheet. Not needed for /rs/param devices — their values are auto-extracted.")
@@ -351,11 +359,12 @@ def _render_config(device: dict) -> dict:
     config["hex_as_float"] = hex_as_float
     config["thresholds"] = thresholds
     config["monitored"] = monitored
+    config["field_map"] = field_map
     return config
 
 
 def _poll(device: dict, config: dict) -> dict:
-    if config.get("simulated", True):
+    if config.get("simulated", False):
         state = st.session_state
         step_key = f"live_step_{device['id']}"
         state[step_key] = state.get(step_key, 0) + 1
@@ -389,28 +398,56 @@ def render() -> None:
                        value=st.session_state.get(f"live_deep_{device_id}", False),
                        key=f"live_deep_{device_id}",
                        help="Warms up on a healthy baseline, then streams each poll through the same engine "
-                            "the Analysis page uses — cases, diagnosis, estimated downtime/cost avoided.")
+                            "the Analysis page uses. Real devices use only their own sources; no demo playbooks.")
+    baseline_confirmed = False
+    if deep and not config.get("simulated"):
+        baseline_confirmed = st.checkbox(
+            "I confirm the initial readings are an acceptable baseline for this device",
+            key=f"live_baseline_{device_id}")
+        st.caption("Warmup is not an automatic health certification. Unknown event codes remain raw.")
+    if config.get("simulated"):
+        st.warning("Synthetic demo feed selected. Its values, event meanings and behavior are not device evidence.")
+    if (st.session_state[on_key] and
+            st.session_state.get(f"live_run_simulated_{device_id}") != bool(config.get("simulated"))):
+        st.session_state[on_key] = False
+        st.session_state.pop(prism_key, None)
+        st.session_state.pop(mon_key, None)
+        st.info("The data source changed. Start again to avoid mixing synthetic and device readings.")
 
     col1, col2, col3 = st.columns(3)
-    if col1.button("▶ Start", type="primary", disabled=st.session_state[on_key]):
+    ready = bool(config.get("simulated") or config.get("endpoint", "").strip())
+    if (not config.get("simulated") and config.get("monitored") and
+            not rest_adapter._PARAM_URL.search(config.get("endpoint", "")) and
+            any(not m.get("path") for m in config["monitored"])):
+        ready = False
+        st.warning("Generic endpoints require a documented JSON value path for every monitored parameter.")
+    if not ready:
+        st.info("Enter your device endpoint or explicitly enable the synthetic demo feed.")
+    if col1.button("▶ Start", type="primary", disabled=st.session_state[on_key] or not ready or
+                   (deep and not config.get("simulated") and not baseline_confirmed)):
+        st.session_state.pop(f"live_prism_err_{device_id}", None)
         st.session_state[mon_key] = LiveMonitor(criticality=device["criticality"],
-                                                thresholds=config.get("thresholds") or {})
+                                                thresholds={} if config.get("simulated") else config.get("thresholds") or {},
+                                                demo_profile=bool(config.get("simulated")))
         if deep:
             from live_engine import LiveFleetEngine
             st.session_state[prism_key] = LiveFleetEngine(
                 asset_id=device["name"] or device_id, criticality=device["criticality"],
-                offline=config.get("simulated", True) or st.session_state.get("prism_offline", False))
+                offline=bool(config.get("simulated")) or st.session_state.get("prism_offline", False),
+                device_id=device_id, asset_type=device["type"], demo_profile=bool(config.get("simulated")),
+                baseline_confirmed=baseline_confirmed)
         else:
             st.session_state.pop(prism_key, None)
         st.session_state[hist_key] = []
         st.session_state[f"live_step_{device_id}"] = 0
         st.session_state[on_key] = True
+        st.session_state[f"live_run_simulated_{device_id}"] = bool(config.get("simulated"))
         st.rerun()
     if col2.button("⏸ Stop", disabled=not st.session_state[on_key]):
         st.session_state[on_key] = False
         st.rerun()
     if col3.button("🔄 Reset"):
-        for key in (mon_key, hist_key, on_key, prism_key):
+        for key in (mon_key, hist_key, on_key, prism_key, f"live_prism_err_{device_id}"):
             st.session_state.pop(key, None)
         st.rerun()
 
@@ -430,21 +467,26 @@ def render() -> None:
                 hint = _poll_failure_hint(error, config)
                 if hint:
                     st.info(hint)
-                    if not config.get("simulated", True) and st.button(
+                    if not config.get("simulated", False) and st.button(
                             "▶ Switch to simulated feed and restart", key=f"live_sim_switch_{device_id}"):
                         cfg = _load_config(device_id)
                         cfg["simulated"] = True
                         _save_config(device_id, cfg)
                         st.session_state[mon_key] = LiveMonitor(
-                            criticality=device["criticality"], thresholds=config.get("thresholds") or {})
+                            criticality=device["criticality"], demo_profile=True)
+                        st.session_state.pop(prism_key, None)
                         st.session_state[hist_key] = []
                         st.session_state[on_key] = True
+                        st.session_state[f"live_run_simulated_{device_id}"] = True
                         st.rerun()
                 st.session_state[on_key] = False
                 return
             new_issues = monitor.observe(reading)
             # Enrich newly raised issues with a grounded description (once each).
             for issue in new_issues:
+                if config.get("simulated"):
+                    issue["description"] = "Synthetic demo observation, not a finding about the selected device."
+                    continue
                 try:
                     issue["description"] = rag.describe_issue(
                         device_id, param=issue.get("label") or issue["metric"], value=issue["value"],
@@ -462,6 +504,7 @@ def render() -> None:
                     prism.observe(reading)
                 except Exception as error:  # noqa: BLE001
                     st.session_state[f"live_prism_err_{device_id}"] = str(error)
+                    st.session_state.pop(prism_key, None)
 
         summary = monitor.summary()
         metric_cols = st.columns(5)
@@ -471,19 +514,19 @@ def render() -> None:
         metric_cols[3].metric("Escalated", summary["escalated"])
         metric_cols[4].metric("Cost avoided (est.)", f"${summary['cost_avoided_usd']:,.0f}")
         st.caption(f"Downtime avoided (estimated): {summary['downtime_avoided_min']} min · "
-                   "estimates only, not measured savings.")
+                   "no repair or avoided-loss value is inferred for real-device observations.")
 
         _render_prism_live(device_id, prism_key)
 
         history = st.session_state.get(hist_key, [])
         last_metrics = st.session_state.get(f"live_lastmetrics_{device_id}")
-        if last_metrics is not None and not config.get("simulated", True) and not last_metrics:
+        if last_metrics is not None and not config.get("simulated", False) and not last_metrics:
             st.warning("The device responded but no numeric value was found. Expand the raw response "
                        "below, or set the value path for that parameter.")
         if history:
             frame = pd.DataFrame(history).set_index("timestamp")
             columns = [c for c in frame.columns if c != "timestamp"]
-            if config.get("simulated", True):
+            if config.get("simulated", False):
                 if columns:
                     st.line_chart(frame[columns])
             else:
@@ -520,7 +563,7 @@ def render() -> None:
                     if issue.get("description"):
                         st.write(issue["description"])
         raw = st.session_state.get(f"live_lastraw_{device_id}")
-        if raw is not None and not config.get("simulated", True):
+        if raw is not None and not config.get("simulated", False):
             with st.expander("🔎 Latest raw device response"):
                 st.json(raw)
 

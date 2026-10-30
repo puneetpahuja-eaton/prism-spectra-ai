@@ -35,7 +35,9 @@ def _mode_changed() -> None:
 
 def create_engine() -> Engine:
     dataset = st.session_state.get("prism_pending_dataset")
-    return Engine(offline=st.session_state.get("prism_offline", not is_live()), dataset=dataset)
+    return Engine(offline=st.session_state.get("prism_offline", not is_live()), dataset=dataset,
+                  device_id=st.session_state.get("prism_device"),
+                  demo_profile=st.session_state.get("prism_demo_profile", False))
 
 
 def tick(engine: Engine) -> None:
@@ -111,7 +113,8 @@ def data_panel(engine: Engine) -> None:
                     raise ValueError(f"Authorize processing by {backend()} or choose explicit offline simulation.")
                 data = replacement(upload.getvalue().decode("utf-8-sig"), upload.name)
                 with st.spinner("Validating replacement and training per-asset PRISM models..."):
-                    replacement_engine = Engine(offline=engine.offline, dataset=data)
+                    replacement_engine = Engine(offline=engine.offline, dataset=data,
+                                                device_id=st.session_state.get("prism_device"))
             except CLOUD_ERRORS as error:
                 st.error(f"Replacement rejected; existing fleet is unchanged: {error}")
             else:
@@ -172,14 +175,15 @@ def case_panel(engine: Engine, case) -> None:
         st.download_button("Download attached public evidence", json.dumps(packet, indent=2),
                            "case-public-evidence.json", "application/json",
                            key=f"public_packet_{case.case_id}", on_click="ignore")
-    st.caption("The original planned-action label above describes the simulator playbook, not an instruction to operate equipment.")
+    st.caption("The planned action describes a synthetic playbook, not an equipment instruction." if engine.demo_profile
+               else "Observation-only handoff. No device action, ticket dispatch or repair has been performed.")
 
 
 def _audit_rows(engine: Engine) -> list[dict]:
     result = []
     for case in engine.cases:
         detail = engine.cloud_cases.get(case.case_id, {})
-        diagnosis = detail.get("diagnosis", {})
+        diagnosis = detail.get("diagnosis") or {}
         result.append({
             "ts": datetime_now(), "case_id": f"{engine.run_id}:{case.case_id}", "revision": engine.current_idx + 1,
             "asset_id": case.root_asset_id, "root_cause": diagnosis.get("root_cause", case.fault_type),

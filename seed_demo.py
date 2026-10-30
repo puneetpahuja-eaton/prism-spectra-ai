@@ -5,12 +5,12 @@ scenarios) so Analysis immediately shows diagnosis accuracy, downtime avoided an
 cost avoided working end-to-end. The data is clearly synthetic and the scenarios
 are disclosed; this is a demonstration fixture, not real field data.
 
-Idempotent and race-safe: uses a FIXED device id so concurrent Cloud Run
-instances converge to a single document, and it removes any stray demo devices.
+Uses a fixed device id and preserves existing devices and stored data.
 """
 from __future__ import annotations
 
 import datetime
+import logging
 
 import datastore
 import device_data
@@ -57,7 +57,7 @@ def build_demo_dataset() -> FleetDataset:
                     description="Sustained overload on motor 7 — auto-fix does not clear it, so it is "
                                 "escalated to an engineer."),
     ]
-    spec = DatasetSpec(assets=assets, sample_interval_min=5, duration_days=2,
+    spec = DatasetSpec(profile="power-demo", assets=assets, sample_interval_min=5, duration_days=2,
                        history_days=1, anomalies=anomalies)
     return build_dataset(spec)
 
@@ -65,36 +65,26 @@ def build_demo_dataset() -> FleetDataset:
 def ensure_demo(force: bool = False) -> str | None:
     """Create the demo device + labeled dataset if it does not already exist.
 
-    Uses a fixed device id so concurrent instances converge on one document, and
-    deletes any stray demo devices from earlier races. Returns the device id, or
+    Uses a fixed device id without removing previous records. Returns the device id, or
     None if seeding is skipped or fails. Never raises, so it is safe at startup.
     """
     try:
         current = devices.get_device(_DEMO_ID)
-        # Remove any demo device from an older version (different marker or stray id)
-        # so a changed demo regenerates with the latest dataset.
-        for d in devices.list_devices():
-            marker = (d.get("metadata") or {}).get("demo")
-            if marker and (marker != _DEMO_MARKER or d.get("id") != _DEMO_ID):
-                try:
-                    devices.delete_device(d["id"])
-                except Exception:
-                    pass
-        up_to_date = bool(current) and (current.get("metadata") or {}).get("demo") == _DEMO_MARKER
-        if not force and up_to_date:
+        if not force and current:
             return _DEMO_ID
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         record = {
-            "id": _DEMO_ID, "name": _DEMO_NAME, "type": "METER", "model": "RTK DCI PanelBoard",
+            "id": _DEMO_ID, "name": _DEMO_NAME, "type": "METER", "model": "Synthetic demonstration",
             "site": "DEMO-PLANT", "ip": "", "criticality": "high", "protocol": "rest",
             "status": "configuring", "created_by": "seed", "created_at": now,
             "metadata": {"demo": _DEMO_MARKER,
                          "note": "Synthetic labeled demo: 3 assets, 3 disclosed ground-truth faults."},
         }
         datastore.set_doc("devices", _DEMO_ID, record)
-        device_data.set_dataset(_DEMO_ID, build_demo_dataset())
+        device_data.set_dataset(_DEMO_ID, build_demo_dataset(), demo_profile=True)
         return _DEMO_ID
     except Exception:  # Seeding must never block app startup.
+        logging.getLogger(__name__).exception("Synthetic demo seeding failed; existing user devices were not removed.")
         return None
 
 

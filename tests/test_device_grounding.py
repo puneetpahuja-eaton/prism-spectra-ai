@@ -1,0 +1,247 @@
+"""Regression boundaries between supplied device facts and synthetic fixtures."""
+from datetime import datetime, timedelta, timezone
+import unittest
+from unittest.mock import Mock, patch
+
+from streamlit.testing.v1 import AppTest
+
+import dataset_gen
+import device_data
+import devices
+from device_grounding import verify_quote
+from fleet_data import FleetAsset, FleetDataset, Reading
+from gemini_client import ModelUnavailable
+from live.inference import suggest_field_map
+from live.monitor import LiveMonitor
+from live.rest_adapter import poll
+from live_engine import LiveFleetEngine
+import monitor_gen
+from prism_cloud import Engine
+from tests.test_platform import PlatformTestBase
+
+
+def small_dataset():
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    history = [Reading(timestamp=base + timedelta(minutes=i), asset_id="A",
+                       metrics={"channel_x": 10 + (i % 3) * .1}, event_codes=["DEVICE_READY"])
+               for i in range(20)]
+    replay = [Reading(timestamp=base + timedelta(minutes=20 + i), asset_id="A",
+                      metrics={"channel_x": value}, event_codes=["DEVICE_READY"] if i != 1 else ["BREAKER_OPEN"])
+              for i, value in enumerate((10, 90, 10, 10))]
+    return FleetDataset(assets=[FleetAsset(id="A", type="CUSTOM", criticality="low")],
+                        history=history, telemetry=replay)
+
+
+class DeviceGroundingTests(PlatformTestBase):
+    def test_new_and_legacy_unconfigured_devices_do_not_enable_demo(self):
+        device = devices.create_device(name="Unknown", type="CUSTOM")
+        self.assertEqual(device_data.mode(device["id"]), "unconfigured")
+        import datastore
+        datastore.set_doc("devices", "old", {"id": "old"})
+        self.assertEqual(device_data.mode("old"), "unconfigured")
+
+    def test_demo_switch_does_not_delete_saved_readings(self):
+        device = devices.create_device(name="D", type="CUSTOM")
+        data = small_dataset()
+        device_data.set_dataset(device["id"], data)
+        device_data.set_synthetic(device["id"])
+        self.assertEqual(device_data.get_dataset(device["id"]).model_dump_json(), data.model_dump_json())
+        device_data.set_dataset(device["id"], data)
+        self.assertFalse(device_data.uses_demo_profile(device["id"]))
+
+    def test_selector_requires_explicit_choice(self):
+        device = devices.create_device(name="Demo", type="CUSTOM")
+        app = AppTest.from_string("from ui_common import device_selector\ndevice_selector()\n").run()
+        self.assertIsNone(app.selectbox[0].value)
+        app.selectbox[0].set_value(device["id"]).run()
+        self.assertEqual(app.session_state["active_device"], device["id"])
+
+    def test_unconfigured_analysis_does_not_create_power_engine(self):
+        device = devices.create_device(name="New", type="CUSTOM")
+        app = AppTest.from_string(
+            "import streamlit as st\nfrom views.analysis import render\nrender()\n")
+        app.session_state["analysis_device"] = device["id"]
+        with patch("views.analysis.Engine") as engine:
+            app.run()
+        engine.assert_not_called()
+        self.assertFalse(app.exception)
+        self.assertTrue(any("No telemetry is configured" in item.value for item in app.info))
+
+    def test_device_analysis_renders_and_steps_without_simulator(self):
+        device = devices.create_device(name="Source-only", type="CUSTOM")
+        device_data.set_dataset(device["id"], small_dataset())
+        app = AppTest.from_string("from views.analysis import render\nrender()\n", default_timeout=30)
+        app.session_state["analysis_device"] = device["id"]
+        app.session_state["user"] = {"email": "engineer@example.com", "role": "engineer"}
+        app.run()
+        self.assertFalse(app.exception)
+        next(button for button in app.button if button.label == "Analyze next reading").click().run()
+        self.assertFalse(app.exception)
+        self.assertFalse(app.session_state["engine"].demo_profile)
+        self.assertEqual(app.session_state["engine"].current_idx, 0)
+        next(button for button in app.button if button.label == "Analyze next reading").click().run()
+        self.assertFalse(app.exception)
+        next(button for button in app.button if button.label == "Research public guidance for this case").click().run()
+        self.assertEqual(app.session_state["research_case_context"]["device_id"], device["id"])
+        from prism_extensions import _audit_rows
+        self.assertEqual(_audit_rows(app.session_state["engine"])[0]["root_cause"], "UNCLASSIFIED")
+
+    def test_generic_engine_never_loads_bundled_sop_or_playbook(self):
+        data = small_dataset()
+        original = data.model_dump_json()
+        with patch("prism_cloud.storage.load_text") as bundled, patch("rag.retrieve") as retrieve:
+            engine = Engine(dataset=data, offline=True)
+            engine.run_all()
+        bundled.assert_not_called()
+        retrieve.assert_not_called()
+        self.assertTrue(engine.cases)
+        self.assertTrue(all(c.fault_type == "UNCLASSIFIED" and c.decision == "ESCALATE" for c in engine.cases))
+        self.assertEqual(engine.summary()["cost_avoided_usd"], 0)
+        self.assertEqual(engine.summary()["downtime_avoided_min"], 0)
+        self.assertIsNone(engine.summary()["diagnosis_accuracy"])
+        self.assertEqual(data.model_dump_json(), original)
+        self.assertTrue(all(detail["errors"] for detail in engine.cloud_cases.values()))
+        self.assertNotIn("lookup_playbook", {tool.tool for tool in engine.tool_calls})
+
+    def test_model_diagnosis_retrieves_only_selected_device_sources(self):
+        result = {"confidence": .2, "_citation_check": "validated"}
+        with patch("rag.retrieve", return_value=[{"text": "Custom channel guidance.", "source_name": "user-note"}]) as retrieve, \
+                patch("prism_cloud.diagnose", return_value=result) as diagnose:
+            engine = Engine(dataset=small_dataset(), device_id="selected", offline=False)
+            engine.tick()
+            engine.tick()
+        self.assertEqual(retrieve.call_args.args[0], "selected")
+        self.assertEqual(diagnose.call_args.kwargs, {"device_only": True})
+        self.assertIn("Custom channel guidance.", diagnose.call_args.args[1])
+        self.assertNotIn("SOP-106", diagnose.call_args.args[1])
+
+    def test_independent_generator_uses_supplied_frequency_range_not_50hz(self):
+        spec = dataset_gen.DatasetSpec(assets=[dataset_gen.AssetSpec(
+            id="A", metrics=[dataset_gen.MetricSpec(name="frequency_hz", unit="Hz", normal_min=700, normal_max=710)])],
+            sample_interval_min=60, duration_days=1)
+        data = dataset_gen.build_dataset(spec)
+        self.assertTrue(all(700 <= r.metrics["frequency_hz"] <= 710 for r in data.history + data.telemetry))
+        self.assertFalse(data.scenarios)
+
+    def test_generic_dataset_retains_recovery_and_escalation_mix(self):
+        spec = dataset_gen.DatasetSpec(assets=[dataset_gen.AssetSpec(
+            id="A", criticality="low",
+            metrics=[dataset_gen.MetricSpec(name="arbitrary_channel", normal_min=10, normal_max=11)])],
+            sample_interval_min=60, duration_days=3)
+        spec.anomalies = dataset_gen.ensure_anomaly_mix(spec)
+        self.assertTrue(any(a.recovers for a in spec.anomalies))
+        self.assertTrue(any(not a.recovers for a in spec.anomalies))
+        engine = Engine(dataset=dataset_gen.build_dataset(spec), offline=True)
+        engine.run_all()
+        self.assertGreaterEqual(engine.summary()["auto_resolved"], 1)
+        self.assertGreaterEqual(engine.summary()["escalated"], 1)
+        self.assertEqual(engine.summary()["cost_avoided_usd"], 0)
+
+    def test_ungrounded_generated_spec_is_rejected(self):
+        raw = {"assets": [{"id": "A", "metrics": [{"name": "invented", "unit": "%", "normal_min": 1, "normal_max": 2}]}]}
+        with patch("dataset_gen.is_live", return_value=True), \
+                patch("dataset_gen.generate_json", return_value={"spec": raw}):
+            with self.assertRaisesRegex(ValueError, "evidence"):
+                dataset_gen.generate_spec("", "Build a dataset")
+
+    def test_missing_dataset_details_are_questions_not_defaults(self):
+        with patch("dataset_gen.is_live", return_value=True), \
+                patch("dataset_gen.generate_json", return_value={"missing_details": ["Which units and ranges?"]}):
+            with self.assertRaisesRegex(ValueError, "Which units"):
+                dataset_gen.generate_spec("", "Build a dataset")
+
+    def test_literal_fields_must_occur_in_exact_supplied_quote(self):
+        verify_quote("channel_x unit mm range 1 to 5", "channel_x unit mm range 1 to 5", ["channel_x", "mm", 1., 5.])
+        for quote, values in (("invented text", []), ("channel_x unit mm range 1 to 5", [100.])):
+            with self.assertRaises(ValueError):
+                verify_quote(quote, "channel_x unit mm range 1 to 5", values)
+
+    def test_missing_monitor_plan_details_are_rejected(self):
+        with patch("monitor_gen.is_live", return_value=True), patch("monitor_gen.rag.retrieve", return_value=[]), \
+                patch("monitor_gen.generate_json", return_value={"missing_details": ["Which parameter ID?"]}):
+            with self.assertRaisesRegex(ValueError, "parameter ID"):
+                monitor_gen.generate_plan("D", "monitor")
+
+    def test_unknown_encoding_is_not_replaced_by_float(self):
+        config = monitor_gen.plan_to_config({"poll_interval_s": 30, "params": []}, "https://device.example/api")
+        self.assertIsNone(config["hex_as_float"])
+        response = Mock()
+        response.json.return_value = {"value": "0x41F00000"}
+        with patch("live.rest_adapter.requests.get", return_value=response):
+            with self.assertRaisesRegex(RuntimeError, "explicit encoding"):
+                poll("rest", config)
+            config["hex_as_float"] = False
+            self.assertEqual(poll("rest", config)["metrics"]["value"], int("41F00000", 16))
+            config["hex_as_float"] = True
+            self.assertEqual(poll("rest", config)["metrics"]["value"], 30.)
+
+    def test_real_monitor_does_not_assign_demo_code_meanings(self):
+        monitor = LiveMonitor()
+        monitor.observe({"metrics": {"raw": 10}, "codes": ["BREAKER_OPEN"]})
+        self.assertFalse(monitor.issues)
+
+    def test_live_baseline_requires_confirmation(self):
+        with self.assertRaisesRegex(ValueError, "Confirm"):
+            LiveFleetEngine(asset_id="A")
+        engine = LiveFleetEngine(asset_id="A", asset_type="CUSTOM", device_id="D",
+                                 baseline_confirmed=True, offline=True)
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for i in range(21):
+            engine.observe({"timestamp": (base + timedelta(minutes=i)).isoformat(),
+                            "metrics": {"raw": 10 + i % 2}, "codes": ["DEVICE_READY"]})
+        self.assertEqual(engine.engine.topo.get("A").type, "CUSTOM")
+        self.assertFalse(engine.engine.demo_profile)
+        self.assertEqual(engine.engine.dataset.history[0].event_codes, ["DEVICE_READY"])
+        self.assertEqual(engine.engine.current_idx, 0)
+        engine.observe({"timestamp": (base + timedelta(minutes=21)).isoformat(),
+                        "metrics": {"raw": 77}, "codes": ["RAW_EVENT"]})
+        self.assertEqual(engine.engine.current_idx, 1)
+        self.assertEqual(engine.engine.history[1]["A"]["metrics"], {"raw": 77})
+        with self.assertRaisesRegex(ValueError, "missing"):
+            engine.observe({"metrics": {}})
+
+    def test_field_mapping_outage_does_not_substitute_heuristics(self):
+        with patch("live.inference.is_live", return_value=True), \
+                patch("live.inference.rag.retrieve", return_value=[]), \
+                patch("live.inference.generate_json", side_effect=ModelUnavailable("down")):
+            with self.assertRaises(ModelUnavailable):
+                suggest_field_map("D", '{"temperature": 5}')
+
+    def test_field_mapping_rejects_invented_path_or_metric(self):
+        with patch("live.inference.is_live", return_value=True), \
+                patch("live.inference.rag.retrieve", return_value=[]), \
+                patch("live.inference.generate_json", return_value={"field_map": {"temperature_c": "raw"}}):
+            with self.assertRaisesRegex(ValueError, "metric name"):
+                suggest_field_map("D", '{"raw":5}')
+
+    def test_numeric_array_mapping_accepts_actual_nonfirst_element(self):
+        with patch("live.inference.is_live", return_value=True), \
+                patch("live.inference.rag.retrieve", return_value=[]), \
+                patch("live.inference.generate_json", return_value={"field_map": {"raw": "readings.1.raw"}}):
+            self.assertEqual(suggest_field_map("D", '{"readings":[{"raw":1},{"raw":2}]}')["field_map"],
+                             {"raw": "readings.1.raw"})
+
+    def test_device_live_page_does_not_default_to_simulation_or_hex_decoding(self):
+        device = devices.create_device(name="Unknown", type="CUSTOM")
+        app = AppTest.from_string(
+            "import streamlit as st\nfrom views.live_monitoring import render\n"
+            "st.session_state['user']={'email':'engineer@example.com','role':'engineer'}\nrender()\n")
+        app.session_state["live_device"] = device["id"]
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertFalse(app.toggle[0].value)
+        self.assertEqual(next(s for s in app.selectbox if s.label == "Hex value format").value,
+                         "Unknown / numeric values only")
+        self.assertTrue(next(b for b in app.button if b.label == "▶ Start").disabled)
+
+    def test_raw_parameter_ids_do_not_match_longer_identifiers(self):
+        with self.assertRaises(ValueError):
+            verify_quote("ID 7000", "ID 7000", ["700"])
+
+    def test_absent_event_codes_are_not_fabricated_as_ok(self):
+        row = Reading(timestamp=datetime.now(timezone.utc), asset_id="A", metrics={"raw": 10})
+        self.assertEqual(row.event_codes, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -308,7 +308,7 @@ class ResearchPageTests(unittest.TestCase):
         self.addCleanup(environment.stop)
 
     def test_engineer_page_preview_never_calls_api_and_requires_consent(self):
-        devices.create_device(name="PRIVATE_DEVICE_NAME", type="METER", ip="10.1.2.3")
+        device = devices.create_device(name="PRIVATE_DEVICE_NAME", type="METER", ip="10.1.2.3")
         app = AppTest.from_string(
             "import streamlit as st\n"
             "from views.public_research import render\n"
@@ -317,8 +317,10 @@ class ResearchPageTests(unittest.TestCase):
         with patch("views.public_research.tavily.configured", return_value=True), \
                 patch("integrations.tavily.requests.post") as post:
             app.run()
+            app.selectbox(key="research_device_select").set_value(device["id"]).run()
             app.text_input(key="research_product").set_value("Vendor UPS")
             app.text_input(key="research_symptom").set_value("battery alarm")
+            app.text_input(key="research_domains").set_value("vendor.com")
             app.run()
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(app.button[0].disabled)

@@ -22,10 +22,12 @@ def render() -> None:
     st.subheader("Option A — Built-in PRISM power demo (synthetic)")
     st.markdown(
         "Attaches the 22-asset, 6-scenario PRISM power simulator. This runs in **synthetic mode** with "
-        "the full self-healing showcase (auto-remediation + verification)."
+        "the full self-healing showcase (auto-remediation + verification). Its electrical specifications "
+        "are demo fixtures, not knowledge about the selected device. Existing stored telemetry is retained."
     )
     if st.button("Use built-in synthetic simulator", type="primary"):
         device_data.set_synthetic(device_id)
+        st.session_state.pop("prism_device", None)
         st.success("Device set to synthetic PRISM simulator. Open **Analysis** to run it.")
 
     st.divider()
@@ -35,7 +37,8 @@ def render() -> None:
     if st.button("Generate PRISM dataset snapshot"):
         with st.spinner("Generating telemetry dataset..."):
             dataset = device_data.build_prism_demo_dataset()
-            device_data.set_dataset(device_id, dataset)
+            device_data.set_dataset(device_id, dataset, demo_profile=True)
+            st.session_state.pop("prism_device", None)
         st.success(f"Stored a {len(dataset.assets)}-asset dataset. Open **Analysis** to run it.")
 
     st.divider()
@@ -47,6 +50,7 @@ def render() -> None:
         try:
             dataset = replacement(upload.getvalue().decode("utf-8-sig"), upload.name)
             device_data.set_dataset(device_id, dataset)
+            st.session_state.pop("prism_device", None)
         except Exception as error:  # noqa: BLE001
             st.error(f"Rejected; telemetry unchanged: {error}")
         else:

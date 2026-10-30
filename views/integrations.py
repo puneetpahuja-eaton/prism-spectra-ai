@@ -61,7 +61,7 @@ def render() -> None:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("GitHub repository")
-        repo = st.text_input("owner/repo or URL", key="gh_repo", placeholder="eaton/prism-firmware")
+        repo = st.text_input("owner/repo or URL", key="gh_repo", placeholder="your-org/device-firmware")
         branch = st.text_input("Branch (optional)", key="gh_branch")
         force = st.checkbox("Force full re-ingest (ignore cache)", key="gh_force",
                             help="Off = incremental: only changed files are re-embedded.")

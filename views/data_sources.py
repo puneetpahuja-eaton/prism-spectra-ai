@@ -41,7 +41,10 @@ def render() -> None:
         progress.progress(1.0, "Done.")
         st.rerun()
 
-    st.subheader("Paste text")
+    st.subheader("Paste text / explicit device guidance")
+    st.caption("Save your own parameter IDs, units, normal ranges, encoding rules and event meanings here. "
+               "Guidance is stored only for this device and retrieved alongside its code/docs. "
+               "Assistant assumptions and Tavily findings are not automatically saved as device truth.")
     with st.form("paste_source", clear_on_submit=True):
         name = st.text_input("Source name", placeholder="Field note 2026-10")
         text = st.text_area("Text", height=150)
