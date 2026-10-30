@@ -1,4 +1,4 @@
-"""Kairos AI — multi-device AI reliability platform for the Nebius x NVIDIA hackathon."""
+"""Prism-Spectra-AI — multi-device reliability platform for the Nebius x NVIDIA hackathon."""
 from __future__ import annotations
 
 import os
@@ -39,11 +39,11 @@ def _maybe_seed_demo() -> None:
 
 def home() -> None:
     user = ui_common.current_user()
-    st.title("⚡ Kairos AI")
+    st.title("⚡ Prism-Spectra-AI")
     st.caption("Industrial reliability copilot · Nebius x NVIDIA Global AI Hackathon")
     st.markdown(
         f"Signed in as **{user['email']}** (`{user['role']}`).\n\n"
-        "Kairos AI onboards devices, learns from their documents and data (RAG), analyzes fed and "
+        "Prism-Spectra-AI onboards devices, learns from their documents and data (RAG), analyzes fed and "
         "**live** telemetry with an agentic engine, and answers questions in a grounded chat."
     )
     all_devices = devices.list_devices()

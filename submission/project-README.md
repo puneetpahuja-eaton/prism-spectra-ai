@@ -1,4 +1,4 @@
-# Submission guide
+# Prism-Spectra-AI | Submission guide
 
 Use the repository-root [README](../README.md) for install, configuration,
 deployment, and test instructions. This folder contains the entry materials

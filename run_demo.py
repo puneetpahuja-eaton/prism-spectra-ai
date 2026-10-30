@@ -21,7 +21,7 @@ def main() -> None:
     evidence = build_evidence(incident)
     diagnosis = diagnose(evidence, sop_text)
 
-    print("=== Kairos AI — Grounded Industrial Reliability Co-pilot ===")
+    print("=== Prism-Spectra-AI — Grounded Industrial Reliability Co-pilot ===")
     print(f"Model: {backend()} (live: {is_live()}, source: {diagnosis.get('_source')})\n")
     print("-- Evidence (deterministic) --")
     for s in evidence["signals"]:

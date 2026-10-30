@@ -15,10 +15,10 @@ import bq
 
 PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "project-fd312a16-8445-4b1f-862")
 REGION = os.getenv("GOOGLE_CLOUD_REGION", "asia-south1")
-BUCKET = os.getenv("GCS_BUCKET", f"kairos-nebius-{PROJECT[-12:]}")
-DATASET = os.getenv("BQ_DATASET", "kairos_nebius_audit")
-ACCOUNT = f"kairos-nebius-runtime@{PROJECT}.iam.gserviceaccount.com"
-BUILD_ACCOUNT = f"kairos-nebius-builder@{PROJECT}.iam.gserviceaccount.com"
+BUCKET = os.getenv("GCS_BUCKET", f"prism-spectra-{PROJECT[-12:]}")
+DATASET = os.getenv("BQ_DATASET", "prism_spectra_audit")
+ACCOUNT = f"prism-spectra-runtime@{PROJECT}.iam.gserviceaccount.com"
+BUILD_ACCOUNT = f"prism-spectra-builder@{PROJECT}.iam.gserviceaccount.com"
 ROOT = Path(__file__).resolve().parents[1]
 CLI = Path(os.environ["LOCALAPPDATA"]) / "Google" / "Cloud SDK" / "google-cloud-sdk" / "lib" / "gcloud.py"
 
@@ -44,9 +44,9 @@ def main() -> None:
     os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"] = auth.token
     accounts = json.loads(gcloud("iam", "service-accounts", "list", f"--project={PROJECT}", "--format=json"))
     if not any(account["email"] == ACCOUNT for account in accounts):
-        gcloud("iam", "service-accounts", "create", "kairos-nebius-runtime", f"--project={PROJECT}", "--display-name=Kairos Nebius runtime")
+        gcloud("iam", "service-accounts", "create", "prism-spectra-runtime", f"--project={PROJECT}", "--display-name=Prism-Spectra-AI runtime")
     if not any(account["email"] == BUILD_ACCOUNT for account in accounts):
-        gcloud("iam", "service-accounts", "create", "kairos-nebius-builder", f"--project={PROJECT}", "--display-name=Kairos Nebius builds")
+        gcloud("iam", "service-accounts", "create", "prism-spectra-builder", f"--project={PROJECT}", "--display-name=Prism-Spectra-AI builds")
     gcloud("projects", "add-iam-policy-binding", PROJECT, f"--member=serviceAccount:{BUILD_ACCOUNT}", "--role=roles/run.builder", "--condition=None")
     for role in ("roles/aiplatform.user", "roles/bigquery.jobUser", "roles/datastore.user", "roles/secretmanager.secretAccessor"):
         gcloud("projects", "add-iam-policy-binding", PROJECT, f"--member=serviceAccount:{ACCOUNT}", f"--role={role}", "--condition=None")

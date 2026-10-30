@@ -47,7 +47,7 @@ def _poll_failure_hint(error: Exception, config: dict) -> str | None:
     if _is_private_host(host) and on_cloud:
         return (f"**{host}** is a private network address, which this cloud deployment cannot reach. "
                 "For a live demo, enable **Use built-in simulated feed** in *Configure connection* above. "
-                "To poll this real device, run Kairos AI on a machine on the same network as the device "
+                "To poll this real device, run Prism-Spectra-AI on a machine on the same network as the device "
                 "(for example locally), or expose the device through a public endpoint or VPN.")
     if _is_private_host(host):
         return (f"Couldn't reach **{host}**. Make sure this machine is on the same network as the device "

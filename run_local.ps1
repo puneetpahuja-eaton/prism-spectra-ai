@@ -38,7 +38,7 @@ $env:EMBEDDING_PROVIDER = 'nebius'
 $env:FORCE_MOCK = '0'
 Set-Location $PSScriptRoot
 
-Write-Output 'Starting the Nebius-backed Kairos demo on http://localhost:8506.'
+Write-Output 'Starting the Nebius-backed Prism-Spectra-AI demo on http://localhost:8506.'
 Write-Output 'The Token Factory key must be configured locally in .env or NEBIUS_API_KEY.'
 & $Python -m streamlit run app.py --server.address=127.0.0.1 --server.port=8506 --server.headless=true --browser.gatherUsageStats=false
 exit $LASTEXITCODE

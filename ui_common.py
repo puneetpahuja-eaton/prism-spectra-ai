@@ -12,7 +12,7 @@ import secretmgr
 from embeddings import backend as embedding_backend
 from gemini_client import backend as model_backend
 
-PAGE_TITLE = "Kairos AI — Nebius x NVIDIA Reliability Copilot"
+PAGE_TITLE = "Prism-Spectra-AI — Nebius x NVIDIA Reliability Copilot"
 
 
 def configure() -> None:
@@ -36,7 +36,7 @@ def logout() -> None:
 
 def login_view() -> None:
     auth.ensure_seed_admin()
-    st.title("⚡ Kairos AI")
+    st.title("⚡ Prism-Spectra-AI")
     st.caption("Multi-device AI reliability platform · Nebius x NVIDIA Global AI Hackathon")
     with st.form("login"):
         email = st.text_input("Email")

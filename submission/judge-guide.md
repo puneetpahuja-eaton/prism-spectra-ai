@@ -1,4 +1,4 @@
-# Judge testing guide
+# Prism-Spectra-AI | Judge testing guide
 
 - **Track:** Best Apps and Agents
 - **Bonus consideration:** Best Use of Tavily

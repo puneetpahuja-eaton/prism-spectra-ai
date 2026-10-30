@@ -1,8 +1,8 @@
-# Kairos AI — Evidence-to-action industrial reliability copilot
+# Prism-Spectra-AI — Evidence-to-action industrial reliability copilot
 
 Industrial alarms say what changed, but engineers still have to connect the
 telemetry to the right device documentation, decide what is safe to do, and
-prepare a useful handoff. Kairos AI brings those steps into one reliability
+prepare a useful handoff. Prism-Spectra-AI brings those steps into one reliability
 workspace for plant operators and reliability engineers.
 
 An operator selects a device, loads its manuals and procedures, and streams

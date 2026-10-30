@@ -57,7 +57,7 @@ def _show_packet(packet: dict) -> None:
     for limitation in packet["limitations"]:
         st.caption(limitation)
     st.download_button("Download evidence packet and runtime trace",
-                       json.dumps(packet, indent=2), "kairos-public-evidence.json", "application/json",
+                       json.dumps(packet, indent=2), "prism-spectra-ai-public-evidence.json", "application/json",
                        key="research_download", on_click="ignore")
 
 

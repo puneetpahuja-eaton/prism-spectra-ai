@@ -347,7 +347,9 @@ class ResearchPageTests(unittest.TestCase):
             "from views.public_research import _show_packet\n"
             "_show_packet(st.session_state['packet'])\n", default_timeout=30)
         app.session_state["packet"] = packet
-        app.run()
+        with patch("views.public_research.st.download_button") as download:
+            app.run()
+        self.assertEqual(download.call_args.args[2], "prism-spectra-ai-public-evidence.json")
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("Map found no approved documentation links" in warning.value
                             for warning in app.warning))

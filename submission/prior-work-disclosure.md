@@ -1,7 +1,8 @@
 # Existing project and significant updates
 
-Kairos AI existed before the Nebius x NVIDIA Global AI Hackathon submission
-period. The entry is an adaptation of the team's existing industrial reliability
+Prism-Spectra-AI builds on the team's project previously named Kairos AI, which
+existed before the Nebius x NVIDIA Global AI Hackathon submission period.
+The entry is an adaptation of the team's existing industrial reliability
 assistant, not a claim that the entire product originated during this event.
 The prior project included device onboarding, document retrieval, Ask / Plan /
 Agent workflows, generated datasets, telemetry monitoring, and the PRISM-based
@@ -28,6 +29,9 @@ updated to:
 - Add the Tavily Public Research workflow: public-only Search, bounded Map
   discovery, Extract, a citation-checked Nemotron brief, runtime API trace and
   explicit evidence-only attachment to analysis cases.
+- Rename this edition to Prism-Spectra-AI across the application, exports and
+  submission materials. Existing account and persisted-data identifiers remain
+  compatible; rebranding itself is not claimed as a technical innovation.
 
 The submission demo must use a configured live Token Factory key so the judges
 can observe the actual Nebius/NVIDIA inference path. Synthetic data, safety

@@ -2,10 +2,10 @@ param(
     [string]$Project = 'project-fd312a16-8445-4b1f-862',
     [string]$Region = 'asia-south1',
     [string]$Model = 'nvidia/Nemotron-3_5-Lightning',
-    [string]$Service = 'kairos-ai-nebius',
+    [string]$Service = 'prism-spectra-ai',
     [string]$NebiusSecret = 'nebius-api-key',
     [string]$TavilySecret = '',
-    [string]$FirestoreDatabase = 'kairos-nebius-demo',
+    [string]$FirestoreDatabase = 'prism-spectra-demo',
     [string]$AdminEmail = 'admin@kairos.ai',
     [Parameter(Mandatory = $true)]
     [string]$AdminPasswordSecret,

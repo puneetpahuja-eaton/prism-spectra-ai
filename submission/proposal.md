@@ -1,4 +1,4 @@
-# Kairos AI | Evidence-to-action industrial reliability copilot
+# Prism-Spectra-AI | Evidence-to-action industrial reliability copilot
 
 ## Problem
 
@@ -9,7 +9,7 @@ bottleneck for power and industrial equipment.
 
 ## Product
 
-Kairos AI is a role-based, multi-device workspace. It ingests device manuals,
+Prism-Spectra-AI is a role-based, multi-device workspace. It ingests device manuals,
 procedures, notes, and optional source links; supports Ask / Plan / Agent modes;
 and analyzes synthetic, uploaded, historical, or REST-polled telemetry. Its
 five-stage workflow connects deterministic anomaly evidence to a grounded model
@@ -51,6 +51,6 @@ The prototype is not validated predictive maintenance.
 
 ## Existing-project work
 
-Kairos AI existed before the event. The Nebius-specific updates made during the
+The underlying project existed before the event. The Nebius-specific updates made during the
 submission period are described in
 [`prior-work-disclosure.md`](prior-work-disclosure.md).

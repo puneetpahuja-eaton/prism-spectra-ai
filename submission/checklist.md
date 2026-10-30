@@ -1,8 +1,8 @@
-# Nebius x NVIDIA submission checklist
+# Prism-Spectra-AI | Nebius x NVIDIA submission checklist
 
 ## Ready in this copy
 
-- [x] Separate project copy; original Kairos project remains unchanged.
+- [x] Separate project copy; original project remains unchanged.
 - [x] Default Nebius Token Factory provider and NVIDIA Nemotron model configured in code.
 - [x] Model provenance is retained and displayed; failed Nebius calls do not
       silently switch to Google AI or offline rules.
@@ -25,7 +25,7 @@
       anonymous access and GitHub's MIT detection verified October 30.
 - [x] If deploying, set the intended Google Cloud project, provision the
       separate resources, add the Token Factory key to Secret Manager as
-      `nebius-api-key`, and deploy `kairos-ai-nebius`. Verify the public URL and
+      `nebius-api-key`, and deploy `prism-spectra-ai`. Verify the public URL and
       provide judge test access through the end of judging.
       Published October 30 as `prism-spectra-ai`, using a separate named
       synthetic database, dedicated runtime identity and per-secret access.

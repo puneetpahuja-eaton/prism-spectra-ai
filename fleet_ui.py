@@ -175,7 +175,7 @@ def operations() -> None:
                                           key=f"trace-{engine.run_id}")
             st.json(engine.trace[-1] if selected_event == "Latest" else engine.trace[int(selected_event) - 1])
         st.download_button("Download fleet audit JSON", json.dumps(engine.audit(), default=str, indent=2),
-                           "kairos-fleet-audit.json", "application/json")
+                           "prism-spectra-ai-fleet-audit.json", "application/json")
         if engine.data.source == "uploaded":
             consent = st.checkbox("I authorize saving these uploaded case summaries to this project's BigQuery audit.",
                                   key=f"save-consent-{engine.run_id}")

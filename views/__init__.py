@@ -1,1 +1,1 @@
-"""Streamlit page views for the Kairos AI platform."""
+"""Streamlit page views for the Prism-Spectra-AI platform."""

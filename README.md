@@ -1,6 +1,6 @@
-# Kairos AI — Industrial Reliability Copilot
+# Prism-Spectra-AI — Industrial Reliability Copilot
 
-Kairos AI helps reliability engineers investigate industrial power and equipment
+Prism-Spectra-AI helps reliability engineers investigate industrial power and equipment
 incidents. It combines telemetry-derived evidence, device-specific documents,
 and a five-stage analysis workflow: Monitor, Diagnose, Decide, Act, Verify.
 
@@ -8,7 +8,7 @@ and a five-stage analysis workflow: Monitor, Diagnose, Decide, Act, Verify.
 - **Required AI path:** NVIDIA Nemotron-3.5-Lightning through Nebius Token Factory
 - **Demo data:** Synthetic; the app does not control equipment or dispatch real work orders.
 
-This is a separate adaptation of an existing Kairos AI project for the
+This is a separate adaptation of an existing industrial reliability project for the
 [Nebius x NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com).
 The official submission period ends October 30, 2026 at 10:00 a.m. Pacific.
 
@@ -207,16 +207,16 @@ For a separate Cloud Run deployment:
 2. Run `python -m cloud.provision` to provision this copy's separate storage,
    dataset, and service identities.
 3. In Google Secret Manager, create a secret named `nebius-api-key` and add the
-   Token Factory key as a version. Create a separate `kairos-admin-password`
+   Token Factory key as a version. Create a separate `prism-spectra-admin-password`
    secret with a strong owner password.
-4. Create a named Firestore database, for example `kairos-nebius-demo`, and
+4. Create a named Firestore database, for example `prism-spectra-demo`, and
    grant the runtime service account access. Do not reuse a database containing
    private devices or existing integration credentials. Seed an engineer account
    for judges and supply its credentials privately in Devpost testing instructions.
-5. Run `.\cloud\deploy.ps1 -AdminPasswordSecret kairos-admin-password`.
+5. Run `.\cloud\deploy.ps1 -AdminPasswordSecret prism-spectra-admin-password`.
    It deploys to the separate service
-   `kairos-ai-nebius`; it does not update the original Kairos service.
-   The database defaults to `kairos-nebius-demo`; override with
+   `prism-spectra-ai`; it does not update the original project's service.
+   The database defaults to `prism-spectra-demo`; override with
    `-FirestoreDatabase`. The script rejects `(default)` to avoid accidental
    reuse. Instance count defaults to two with scale-to-zero enabled.
    To enable public research in the hosted demo, create a `tavily-api-key`
@@ -250,7 +250,8 @@ verified until it has been run successfully with your own Token Factory access.
 
 ## Existing-project disclosure
 
-Kairos AI existed before the hackathon submission period. The adaptation and
+The underlying project existed before the hackathon submission period under
+the name Kairos AI. This edition is now named Prism-Spectra-AI. The adaptation and
 significant changes made during the period are documented in
 [`submission/prior-work-disclosure.md`](submission/prior-work-disclosure.md).
 The older Google Cloud AI Builder Cup pitch decks and videos are local archive
@@ -263,7 +264,15 @@ artifacts, not materials for this submission.
 - [Video script (under three minutes)](submission/video-script.md)
 - [Submission checklist](submission/checklist.md)
 
-Create a **new public repository** for this adaptation before submitting; the
-existing Kairos repository should remain separate. This project includes an
-MIT license in [`LICENSE`](LICENSE). Confirm the public repository detects it
-before submission.
+This adaptation is published in its own public repository; the original project
+and its history remain separate. GitHub detects the MIT license in
+[`LICENSE`](LICENSE).
+
+## Branding compatibility
+
+The current product name is **Prism-Spectra-AI**, including UI titles, generated
+audit/evidence filenames and submission materials. Existing `KAIROS_ADMIN_EMAIL`
+and `KAIROS_ADMIN_PASSWORD` configuration keys, local development login and the
+stored demo marker are retained for compatibility; the rename does not reset
+accounts or reseed saved devices. Historical disclosure, original copyright
+attribution and ignored archive filenames preserve their original names.

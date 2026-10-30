@@ -21,6 +21,7 @@ class DashboardTests(unittest.TestCase):
     def test_offline_dashboard_retains_approved_case(self):
         app = self.incident_app()
         self.assertEqual(len(app.exception), 0)
+        self.assertEqual(app.title[0].value, "Prism-Spectra-AI")
         app.button[0].click().run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(app.session_state["cases"][0]["verification"]["status"], "pending_approval")
