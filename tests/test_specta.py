@@ -122,6 +122,42 @@ class SpectaTests(PlatformTestBase):
                 patch("specta.dataset_gen.generate_spec", return_value=spec_for(self.device_id)):
             self.assertEqual(specta.respond(self.conv, "retry")["status"], "complete")
 
+    def test_dataset_request_in_monitor_builder_clarifies_before_any_network(self):
+        specta.begin_task(self.conv, "monitor", "Create a synthetic historic metering dataset for 3 days.")
+        with patch("specta.rag.retrieve") as retrieve, patch("specta.monitor_gen.generate_plan") as monitor:
+            response = specta.respond(self.conv, self.conv.task.request, start_task=True)
+        self.assertEqual(response["status"], "clarification")
+        self.assertIn("dataset", response["content"])
+        self.assertIn("monitoring", response["content"])
+        retrieve.assert_not_called()
+        monitor.assert_not_called()
+        task = self.conv.task
+        with patch("specta.rag.retrieve", return_value=[]), \
+                patch("specta.dataset_gen.generate_spec", return_value=spec_for(self.device_id)) as generate:
+            response = specta.respond(self.conv, "dataset")
+        self.assertEqual(response["status"], "complete")
+        self.assertEqual(task.kind, "dataset")
+        self.assertIn("historic metering dataset", generate.call_args.args[1])
+
+    def test_ambiguous_intent_reply_keeps_task_and_does_not_repeat_network_work(self):
+        specta.begin_task(self.conv, "dataset", "Build a live monitoring plan for channel_x.")
+        with patch("specta.rag.retrieve") as retrieve:
+            specta.respond(self.conv, self.conv.task.request, start_task=True)
+            response = specta.respond(self.conv, "retry")
+        self.assertEqual(response["status"], "clarification")
+        self.assertIsNotNone(self.conv.task)
+        retrieve.assert_not_called()
+
+    def test_monitor_uses_already_retrieved_device_context_once(self):
+        specta.begin_task(self.conv, "monitor", "Monitor channel_x")
+        with patch("specta.rag.retrieve", return_value=[{"text": "supplied context"}]) as retrieve, \
+                patch("monitor_gen.is_live", return_value=True), \
+                patch("monitor_gen.generate_json", return_value={
+                    "params": [], "missing_details": ["How often should I poll?"], "answer": "I found channel_x."}):
+            response = specta.respond(self.conv, "Monitor channel_x", start_task=True)
+        self.assertEqual(response["status"], "clarification")
+        retrieve.assert_called_once()
+
     def test_real_client_timeout_retains_task_without_claiming_generation_or_empty_credit(self):
         specta.begin_task(self.conv, "dataset", "Generate data", days=3, interval_min=60)
         task = self.conv.task
@@ -146,7 +182,7 @@ class SpectaTests(PlatformTestBase):
         specta.begin_task(self.conv, "monitor", "Monitor parameter 17")
         with patch("specta.rag.retrieve", return_value=[]), patch("monitor_gen.is_live", return_value=True), \
                 patch("monitor_gen.generate_json", side_effect=[
-                    {"missing_details": ["What unit and interval should parameter 17 use?"]},
+                    {"params": [], "missing_details": ["What unit and interval should parameter 17 use?"]},
                     {"poll_interval_s": 30, "params": [
                         {"pid": "17", "unit": "mm", "path": "data.channel_x",
                          "evidence": "17 unit mm path data.channel_x"}]},
@@ -306,10 +342,16 @@ specta_ui.mount_dock()
 _plan_builder(devices.list_devices()[0])
 """
         app = AppTest.from_string(script, default_timeout=30).run()
-        app.text_area(key=f"mp_req_{self.a}").input("Monitor channel_x").run()
+        app.text_area(key=f"mp_req_{self.a}").input("Create a synthetic dataset.").run()
+        with patch("specta.rag.retrieve") as retrieve, patch("specta.monitor_gen.generate_plan") as generate:
+            app.button(key=f"mp_gen_{self.a}").click().run()
+        self.assertFalse(app.exception)
+        self.assertIn("selected builder and your request", "\n".join(m.value for m in app.markdown))
+        retrieve.assert_not_called()
+        generate.assert_not_called()
         with patch("specta.rag.retrieve", return_value=[]), \
                 patch("specta.monitor_gen.generate_plan", side_effect=ClarificationNeeded(["Which polling interval?"])):
-            app.button(key=f"mp_gen_{self.a}").click().run()
+            app.chat_input(key=f"specta_input_dock_{self.a}").set_value("monitoring plan").run()
         self.assertFalse(app.exception)
         self.assertFalse(app.error)
         self.assertFalse(any("Ask clarifying" in b.label for b in app.button))

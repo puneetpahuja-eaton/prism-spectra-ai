@@ -177,6 +177,13 @@ def count_docs(collection: str) -> int:
     return len(list_docs(collection))
 
 
+def has_docs(collection: str) -> bool:
+    if is_firestore():
+        return next(_fs_collection(collection).select([]).limit(1).stream(), None) is not None
+    with _LOCK:
+        return bool(_load_local().get(collection))
+
+
 # --------------------------------------------------------------------------- #
 # Vector similarity (in-process cosine over a bounded corpus)
 # --------------------------------------------------------------------------- #

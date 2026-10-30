@@ -122,6 +122,19 @@ def model_usage(data: dict, model: str) -> None:
         # Only known model IDs, never a free-form environment value.
         if model.startswith(("nvidia/", "Qwen/")) and all(c.isalnum() or c in "/._-" for c in model):
             current.report["stages"][-1]["model"] = model
+        usage = data.get("usage")
+        if isinstance(usage, dict):
+            current.report["stages"][-1]["usage"] = {
+                key: value for key, value in usage.items() if key in _USAGE and type(value) in (int, float)}
+
+
+def recovered_output_budget() -> None:
+    current = _active.get()
+    if current:
+        for event in reversed(current.report["stages"]):
+            if event["stage"] == "nebius_chat" and event["status"] == "failed":
+                event.update(status="recovered", recovery="larger_output_budget")
+                return
 
 
 def show_report(report: dict, *, key: str) -> None:

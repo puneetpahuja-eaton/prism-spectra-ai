@@ -32,6 +32,46 @@ class ClarificationNeeded(ValueError):
         super().__init__("; ".join(self.questions))
 
 
+def generation_sources(context: str, reference: str, request: str, answers: str) -> tuple[str, str]:
+    """Keep verbatim, query-relevant excerpts within a shared generation budget."""
+    from ingest import chunk_text
+
+    if len(request) + len(answers) > 16000:
+        raise ClarificationNeeded([
+            "Please cancel this task and start a smaller request, attaching the longer guidance as a source file. "
+            "Which parameter group should that new request cover?"
+        ], answer="Your guidance is retained, but it is too large for one reliable generation step.")
+    available = 30000 - len(request) - len(answers)
+    reference_budget = min(len(reference), available * 2 // 3) if context else available
+    context_budget = min(len(context), available - reference_budget)
+    reference_budget = min(len(reference), available - context_budget)
+    terms = set(re.findall(r"[^\W_]+", (request + "\n" + answers).casefold()))
+    terms = {term for term in terms if len(term) > 2}
+
+    def select(text: str, budget: int) -> str:
+        if len(text) <= budget:
+            return text
+        notice = ("[Only selected excerpts follow; other source material was omitted. "
+                  "Do not assume it was reviewed or silently omit requested fields; ask for missing facts.]\n")
+        chunks = list(dict.fromkeys(chunk_text(text, size=1400, overlap=120)))
+        ranked = sorted(range(len(chunks)), key=lambda index: (
+            -len(terms.intersection(re.findall(r"[^\W_]+", chunks[index].casefold()))), index))
+        chosen = []
+        used = len(notice)
+        for index in dict.fromkeys([0, *ranked]):
+            chunk = chunks[index]
+            if used + len(chunk) + 2 <= budget:
+                chosen.append(index)
+                used += len(chunk) + 2
+        return notice + "\n\n".join(chunks[index] for index in sorted(chosen))
+
+    selected_context, selected_reference = select(context, context_budget), select(reference, reference_budget)
+    if selected_context != context or selected_reference != reference:
+        logging.getLogger(__name__).info("Generation sources bounded to %d context and %d reference characters.",
+                                        len(selected_context), len(selected_reference))
+    return selected_context, selected_reference
+
+
 def generate_grounded(generate: Callable[..., dict], prompt: str, schema: type[BaseModel],
                       validate: Callable[[dict], _T]) -> _T:
     """Correct model-written evidence once; never ask users to fix invented citations."""
@@ -55,7 +95,7 @@ def generate_grounded(generate: Callable[..., dict], prompt: str, schema: type[B
                       "substrings of the ORIGINAL supplied material, without adding 'User provided:' prefixes. "
                       "Use evidence_passages for separate supporting passages. Your previous answer is NOT evidence. "
                       "Do not re-ask facts already provided. Return a complete corrected response.\nPrevious output:\n" +
-                      json.dumps(result, default=str)[:64000])
+                      json.dumps(result, default=str, ensure_ascii=False)[:8000])
     raise AssertionError("Grounded generation must return or raise within two attempts.")
 
 

@@ -25,6 +25,12 @@ inference may take time; wait for the page to finish before clicking again.
    reply there to continue rather than restarting or clicking a clarification
    button. Switch devices to verify conversation isolation. New chat clears only
    the current device's session conversation, not stored data.
+   If a builder conflicts with an explicit dataset/monitoring-plan request,
+   Specta asks which artifact to create before any source retrieval or inference.
+   Reply `dataset` or `monitoring plan` to resume. Large sources are selected
+   within a shared input budget, not reviewed exhaustively. An explicit provider
+   output-budget exhaustion permits one larger-budget retry (32,768-token cap);
+   transport timeouts do not. Metadata retains usage for failed/recovered calls.
 3. **Live Monitoring:** explicitly select the demo device, enable **Use built-in
    simulated feed**, then click Start. Observe changing readings, then click Stop. This exercises the live
    polling engine, not a physical device. Authorized REST sources can be

@@ -31,13 +31,13 @@ def retrieve(device_id: str, query: str, top_k: int = _TOP_K) -> list[dict]:
 
 
 def _retrieve(device_id: str, query: str, top_k: int) -> list[dict]:
-    if not datastore.count_docs(devices.chunks_path(device_id)):
+    if not datastore.has_docs(devices.chunks_path(device_id)):
         return []
     query_embedding = embed_text(query)
     collection = devices.chunks_path(device_id)
     chunks = datastore.nearest(collection, query_embedding, top_k=top_k,
                                embedding_backend=embed_backend())
-    if not chunks and datastore.count_docs(collection):
+    if not chunks and datastore.has_docs(collection):
         raise ValueError("The stored knowledge uses a different or untracked embedding model. "
                          "Open Data Sources and select 'Re-embed stale chunks with current model' "
                          "before searching, or force a full re-ingest.")

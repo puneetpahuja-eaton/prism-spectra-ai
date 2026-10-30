@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Callable, Literal
 from uuid import uuid4
 
@@ -33,6 +34,8 @@ class Task:
     days: int | None = None
     interval_min: int | None = None
     asset_count: int = 1
+    awaiting_kind: bool = False
+    intent_confirmed: bool = False
     id: str = field(default_factory=lambda: uuid4().hex)
 
 
@@ -123,10 +126,41 @@ def _history_guidance(conversation: Conversation) -> str:
     return "\n\n".join(m["content"] for m in conversation.messages[-24:] if m["role"] == "user")
 
 
+def _request_kind(request: str) -> TaskKind | None:
+    opening = re.split(r"[\n.!?]", request, maxsplit=1)[0].casefold()
+    dataset = bool(re.search(r"\bdata\s?set\b", opening))
+    monitor = bool(re.search(r"\bmonitor(?:ing)?[- ]+(?:plan|configuration)\b", opening))
+    if dataset != monitor:
+        return "dataset" if dataset else "monitor"
+    return None
+
+
+def _confirm_task_kind(task: Task) -> None:
+    if task.intent_confirmed:
+        return
+    requested = _request_kind(task.request)
+    if requested and requested != task.kind:
+        task.awaiting_kind = True
+    if task.awaiting_kind:
+        choice = task.answers[-1].strip().lower().rstrip(".!") if task.answers else ""
+        if choice in ("dataset", "data set", "monitor", "monitoring", "monitoring plan", "live-monitoring plan",
+                      "live monitoring plan"):
+            task.kind = "dataset" if choice in ("dataset", "data set") else "monitor"
+            task.awaiting_kind = False
+        else:
+            raise ClarificationNeeded([
+                "Should I create the synthetic dataset or the live-monitoring plan first? "
+                "Reply **dataset** or **monitoring plan**."
+            ], answer="The selected builder and your request ask for different artifacts. "
+                      "Your request, reference and guidance are retained; nothing has been generated or applied.")
+    task.intent_confirmed = True
+
+
 def _run_task(conversation: Conversation, notify: Callable[[str], None]) -> dict:
     task = conversation.task
     if task is None:
         raise ValueError("No Specta task is active.")
+    _confirm_task_kind(task)
     notify("Reading the selected device's supplied sources")
     context = _device_context(conversation.device_id, task.request + "\n" + "\n".join(task.answers))
     if task.prior_guidance:
@@ -167,7 +201,8 @@ def _run_task(conversation: Conversation, notify: Callable[[str], None]) -> dict
             "dataset": data, "spec": spec_obj.model_dump(), "status": "complete",
         }
     notify("Checking monitoring IDs, units, limits and decoding against supplied sources")
-    plan = monitor_gen.generate_plan(conversation.device_id, task.request, context + "\n\n" + reference, answers)
+    plan = monitor_gen.generate_plan(conversation.device_id, task.request, reference, answers,
+                                     device_context=context)
     return {
         "content": (f"Your **monitoring plan is ready**: {len(plan['params'])} parameter(s), "
                     f"polled every {plan['poll_interval_s']} seconds.\n\n"

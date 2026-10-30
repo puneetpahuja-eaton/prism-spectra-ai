@@ -20,7 +20,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, create_model, model_validator
 
-from device_grounding import ClarificationNeeded, SOURCE_ONLY, generate_grounded, verify_passages, verify_quote
+from device_grounding import (ClarificationNeeded, SOURCE_ONLY, generate_grounded,
+                              generation_sources, verify_passages, verify_quote)
 from fleet_data import FleetAsset, FleetDataset, Reading
 from nebius_client import generate_json, is_live
 
@@ -130,6 +131,7 @@ def generate_spec(device_context: str, request: str, reference: str = "", answer
                   asset_count: int | None = None) -> dict:
     if not is_live():
         raise RuntimeError("A configured live AI provider is required to generate a dataset spec.")
+    device_context, reference = generation_sources(device_context, reference, request, answers)
     prompt = (
         f"{SOURCE_ONLY}\n"
         "Design a COMPACT dataset specification (not the data itself) for a synthetic dataset of the "
@@ -139,8 +141,8 @@ def generate_spec(device_context: str, request: str, reference: str = "", answer
         "Explicit user-selected synthetic sampling governs this dataset only; it does not change "
         "the actual device's live polling configuration.\n\n"
         f"{_SCHEMA_HINT}\n\n"
-        f"Device context:\n{device_context[:60000]}\n\n"
-        f"Referenced parameter file (optional, authoritative for names/IDs/units):\n{reference[:120000]}\n\n"
+        f"Device context:\n{device_context}\n\n"
+        f"Referenced parameter file (optional, authoritative for names/IDs/units):\n{reference}\n\n"
         f"User request: {request}\n\n"
         f"User answers to clarifying questions (if any): {answers}"
     )

@@ -33,6 +33,63 @@ def small_dataset():
 
 
 class DeviceGroundingTests(PlatformTestBase):
+    def test_generation_bounds_large_sources_but_preserves_user_request_and_relevant_tail(self):
+        irrelevant = "unrelated placeholder documentation\n" * 8000
+        target = "channel_unique unit mm; channel_unique synthetic range 10 to 11"
+        request = "Generate a synthetic dataset for channel_unique."
+        with patch("dataset_gen.is_live", return_value=True), \
+                patch("dataset_gen.generate_json", return_value={"missing_details": ["Which asset?"]}) as model:
+            with self.assertRaises(ValueError):
+                dataset_gen.generate_spec(irrelevant, request, irrelevant + target)
+        prompt = model.call_args.args[0]
+        self.assertLess(len(prompt), 38000)
+        self.assertIn(request, prompt)
+        self.assertIn(target, prompt)
+        self.assertIn("selected excerpts", prompt)
+
+    def test_shared_source_budget_keeps_small_reference_and_bounds_large_context(self):
+        from device_grounding import generation_sources
+        context, reference = generation_sources(
+            "irrelevant placeholder\n" * 10000, "channel_unique unit mm range 10 to 11",
+            "Monitor channel_unique", "")
+        self.assertLessEqual(len(context) + len(reference), 30000)
+        self.assertIn("channel_unique unit mm range 10 to 11", reference)
+
+    def test_source_selection_preserves_all_requested_parameter_facts_at_tail(self):
+        from device_grounding import generation_sources
+        filler = "\n".join(f"Unrelated synthetic placeholder record {i}: no device facts." for i in range(6000))
+        ids = [f"TEST_{i:03d}" for i in range(30)]
+        facts = [f"Parameter {pid} label channel_{i:03d} unit mm path value." for i, pid in enumerate(ids)]
+        request = "Build a monitoring plan for exactly these parameter IDs: " + ", ".join(ids)
+        context, reference = generation_sources(filler, filler + "\n" + "\n".join(facts), request, "")
+        self.assertLessEqual(len(context) + len(reference) + len(request), 30000)
+        for fact in facts:
+            self.assertIn(fact, reference)
+
+    def test_trimmed_monitor_material_is_not_available_as_validation_evidence(self):
+        omitted = "HIDDEN_PARAMETER unit mm"
+        context = "\n".join(f"irrelevant row {index} other text" for index in range(12000))
+        context = context[:120000] + omitted + context[120000:]
+        raw = {"poll_interval_s": 60, "params": [
+            {"pid": "HIDDEN_PARAMETER", "unit": "mm", "evidence": omitted}]}
+        with patch("monitor_gen.is_live", return_value=True), \
+                patch("monitor_gen.generate_json", return_value=raw) as model:
+            with self.assertRaisesRegex(ValueError, "generated evidence after one correction"):
+                monitor_gen.generate_plan("D", "Monitor channel_unique", device_context=context)
+        self.assertNotIn(omitted, model.call_args_list[0].args[0])
+
+    def test_rag_checks_cloud_existence_without_reading_all_embeddings_twice(self):
+        import datastore
+        collection = Mock()
+        collection.select.return_value.limit.return_value.stream.return_value = iter([Mock()])
+        with patch("datastore.is_firestore", return_value=True), \
+                patch("datastore._fs_collection", return_value=collection), \
+                patch("datastore.list_docs") as listing:
+            self.assertTrue(datastore.has_docs("device/chunks"))
+        collection.select.assert_called_once_with([])
+        collection.select.return_value.limit.assert_called_once_with(1)
+        listing.assert_not_called()
+
     def test_new_and_legacy_unconfigured_devices_do_not_enable_demo(self):
         device = devices.create_device(name="Unknown", type="CUSTOM")
         self.assertEqual(device_data.mode(device["id"]), "unconfigured")
@@ -158,7 +215,7 @@ class DeviceGroundingTests(PlatformTestBase):
 
     def test_missing_monitor_plan_details_are_rejected(self):
         with patch("monitor_gen.is_live", return_value=True), patch("monitor_gen.rag.retrieve", return_value=[]), \
-                patch("monitor_gen.generate_json", return_value={"missing_details": ["Which parameter ID?"]}):
+                patch("monitor_gen.generate_json", return_value={"params": [], "missing_details": ["Which parameter ID?"]}):
             with self.assertRaisesRegex(ValueError, "parameter ID"):
                 monitor_gen.generate_plan("D", "monitor")
 

@@ -12,11 +12,12 @@ optional event-log decode spec).
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 import rag
 from nebius_client import generate_json, is_live
-from device_grounding import ClarificationNeeded, SOURCE_ONLY, generate_grounded, verify_passages, verify_quote
+from device_grounding import (ClarificationNeeded, SOURCE_ONLY, generate_grounded,
+                              generation_sources, verify_passages, verify_quote)
 from live.rest_adapter import _PARAM_URL
 
 
@@ -45,11 +46,20 @@ class MonitorPlan(BaseModel):
     poll_interval_s: int | None = Field(default=None, ge=1, le=86400)
     hex_as_float: bool | None = None
     encoding_evidence: str = Field(default="", description="Exact supplied passage specifying hex encoding, if configured")
-    params: list[MonitorParam] = Field(default_factory=list)
+    params: list[MonitorParam] = Field(description="Required array of every requested parameter exactly once; empty only when missing_details asks for necessary facts")
     event_log: EventLogSpec | None = Field(default=None)
     notes: str = Field(default="")
     missing_details: list[str] = Field(default_factory=list, description="Only missing device facts, never requests for document quotes when the user has supplied the facts explicitly")
     answer: str = Field(default="", description="Brief response in plain language; no schema or validation jargon")
+
+    @model_validator(mode="after")
+    def complete_or_clarify(self):
+        if not self.missing_details and (not self.params or self.poll_interval_s is None):
+            raise ValueError("Return nonempty params and poll_interval_s, or explicit missing_details questions. "
+                             "Do not claim a plan is ready with no parameters.")
+        if len({param.pid for param in self.params}) != len(self.params):
+            raise ValueError("Parameter IDs must be unique; return every requested parameter exactly once.")
+        return self
 
 
 _SCHEMA_HINT = (
@@ -64,7 +74,10 @@ _SCHEMA_HINT = (
     "passages. Copy citations yourself; do not ask users to format source quotes. Populate missing_details "
     "with at most 3 focused, plain-language questions when facts are missing, and answer with what is known. "
     "Do not re-ask answered questions or demand schema names. Never invent device facts. "
-    "Leave event_log null unless the supplied material specifies the full layout."
+    "Leave event_log null unless the supplied material specifies the full layout. "
+    "Return every requested parameter exactly once in params, not just an answer describing the plan. "
+    "Keep evidence minimal: copy only the short passage supporting that parameter's fields, "
+    "not the entire parameter list or unrelated source text. Keep answer and notes brief."
 )
 
 
@@ -74,10 +87,12 @@ def _context(device_id: str) -> str:
     return rag._format_context(chunks)[:60000]
 
 
-def generate_plan(device_id: str, request: str, reference: str = "", answers: str = "") -> dict:
+def generate_plan(device_id: str, request: str, reference: str = "", answers: str = "", *,
+                  device_context: str | None = None) -> dict:
     if not is_live():
         raise RuntimeError("A configured live AI provider is required to generate a monitoring plan.")
-    context = _context(device_id)
+    context = _context(device_id) if device_context is None else device_context
+    context, reference = generation_sources(context, reference, request, answers)
     supplied = "\n".join((context, reference, request, answers))
     prompt = (
         f"{SOURCE_ONLY}\n"
@@ -86,8 +101,8 @@ def generate_plan(device_id: str, request: str, reference: str = "", answers: st
         "If the user described an event log, fill event_log with a concrete decode spec; "
         "otherwise set it to null. Never assume IDs, limits, units, encoding or polling interval.\n\n"
         f"{_SCHEMA_HINT}\n\n"
-        f"Device context:\n{context[:60000]}\n\n"
-        f"Referenced parameter file (optional, authoritative for IDs/units):\n{reference[:120000]}\n\n"
+        f"Device context:\n{context}\n\n"
+        f"Referenced parameter file (optional, authoritative for IDs/units):\n{reference}\n\n"
         f"User request: {request}\n\n"
         f"User answers to clarifying questions (if any): {answers}"
     )

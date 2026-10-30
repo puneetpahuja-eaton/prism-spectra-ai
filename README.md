@@ -124,8 +124,22 @@ It is not the VS Code extension and does not have terminal or editor access.
   sampling, synthetic asset count and repository reference are retained. The model's
   output schema is constrained to that exact asset count. Active **Task settings** let you
   correct the reference or sampling; then send `retry`.
-- The monitoring builder follows the same flow. Downloads, source evidence and
-  reviewed application appear inside the conversation. Generation never starts
+- The monitoring builder follows the same flow. If the selected builder
+  conflicts with an explicit dataset/monitoring-plan request, Specta asks which
+  artifact to create before retrieving sources or calling the model. Reply
+  `dataset` or `monitoring plan` to continue with the retained request.
+- Generation selects query-relevant, verbatim source excerpts within a shared
+  30,000-character source/request budget; omitted material is disclosed and
+  cannot validate generated fields. This is not exhaustive repository review.
+  Oversized guidance requires a smaller request with longer material attached.
+  Monitoring reuses the already retrieved context rather than retrieving twice.
+- If Nebius explicitly reports output-budget exhaustion, structured generation
+  retries once with a doubled allowance, capped at 32,768 tokens including
+  reasoning. Truncated output is never accepted as complete. Transport timeouts
+  are not automatically retried. Schema/evidence corrections are separately
+  bounded; usage includes failed attempts and recovered stages are labeled.
+- Downloads, source evidence and reviewed application appear inside the
+  conversation. Generation never starts
   polling. Engineers/admins must verify the plan and supply the endpoint; stop
   any existing live run before applying a different plan.
 - Authorized chat attachments (5 MB per file; 120,000 extracted characters total)
