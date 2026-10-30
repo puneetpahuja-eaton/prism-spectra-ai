@@ -33,6 +33,30 @@ def small_dataset():
 
 
 class DeviceGroundingTests(PlatformTestBase):
+    def test_bad_model_quote_is_replaced_only_by_a_complete_verbatim_source_row(self):
+        source = "channel_unique unit mm; channel_unique synthetic range 10 to 11."
+        raw = {"spec": {"assets": [{"id": "A", "metrics": [
+            {"name": "channel_unique", "unit": "mm", "normal_min": 10, "normal_max": 11,
+             "evidence": "Model invented this quote."}]}]}}
+        with patch("dataset_gen.is_live", return_value=True), \
+                patch("dataset_gen.generate_json", return_value=raw) as model:
+            result = dataset_gen.generate_spec("", source)
+        self.assertEqual(model.call_count, 1)
+        metric = result["assets"][0]["metrics"][0]
+        self.assertEqual(metric["evidence"], source)
+        self.assertEqual(metric["evidence_passages"], [])
+
+    def test_source_row_repair_cannot_supply_a_fabricated_range(self):
+        source = "channel_unique unit mm; channel_unique synthetic range 10 to 11."
+        raw = {"spec": {"assets": [{"id": "A", "metrics": [
+            {"name": "channel_unique", "unit": "mm", "normal_min": 10, "normal_max": 999,
+             "evidence": "Model invented range 10 to 999."}]}]}}
+        with patch("dataset_gen.is_live", return_value=True), \
+                patch("dataset_gen.generate_json", return_value=raw) as model:
+            with self.assertRaisesRegex(ValueError, "generated evidence after one correction"):
+                dataset_gen.generate_spec("", source)
+        self.assertEqual(model.call_count, 2)
+
     def test_generation_bounds_large_sources_but_preserves_user_request_and_relevant_tail(self):
         irrelevant = "unrelated placeholder documentation\n" * 8000
         target = "channel_unique unit mm; channel_unique synthetic range 10 to 11"

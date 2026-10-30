@@ -68,6 +68,11 @@ to **off** for simulation, with no endpoint or hex encoding preselected.
    passages can support a field's name, unit and limits. Missing or unverifiable
    evidence becomes a conversational clarification. Review a monitoring plan before applying
    it. Source membership checks do not prove semantic correctness.
+    If a model-written citation is invalid but a single supplied source row
+    (at most 1,400 characters) contains every generated field value, the app copies
+    and validates that row instead of asking the model to re-create the whole
+    artifact. It never uses omitted material or changes an unsupported value to
+    make validation pass. Otherwise the bounded model correction remains.
 5. Generated user-device datasets use independent illustrative signals within
    supplied ranges. They do not assume three phases, electrical relationships or
    nominal frequency. Injected codes are labeled `SYNTHETIC_*`, not manufacturer

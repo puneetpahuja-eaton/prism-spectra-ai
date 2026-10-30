@@ -21,7 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, create_model, model_validator
 
 from device_grounding import (ClarificationNeeded, SOURCE_ONLY, generate_grounded,
-                              generation_sources, verify_passages, verify_quote)
+                              generation_sources, resolve_passages, verify_quote)
 from fleet_data import FleetAsset, FleetDataset, Reading
 from nebius_client import generate_json, is_live
 
@@ -168,8 +168,9 @@ def _validate_draft(raw: dict, supplied: str) -> dict:
     for asset in spec.assets:
         for metric in asset.metrics:
             try:
-                verify_passages(metric.evidence, metric.evidence_passages, supplied,
-                                [metric.name, metric.unit, metric.normal_min, metric.normal_max], unit=metric.unit)
+                metric.evidence, metric.evidence_passages = resolve_passages(
+                    metric.evidence, metric.evidence_passages, supplied,
+                    [metric.name, metric.unit, metric.normal_min, metric.normal_max], unit=metric.unit)
             except ValueError:
                 questions.append(f"I couldn't verify the supplied evidence for **{metric.name}**. "
                                  "What unit and illustrative minimum/maximum should I use, or which device source documents them?")

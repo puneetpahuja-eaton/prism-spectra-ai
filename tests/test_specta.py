@@ -98,6 +98,18 @@ class SpectaTests(PlatformTestBase):
                 ]) as model:
             result = dataset_gen.generate_spec("", "channel_x unit mm. channel_x synthetic range 10 to 11")
         self.assertEqual(result["assets"][0]["metrics"][0]["unit"], "mm")
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(result["assets"][0]["metrics"][0]["evidence"],
+                         "channel_x unit mm. channel_x synthetic range 10 to 11")
+
+    def test_bad_evidence_without_one_complete_source_row_keeps_bounded_model_correction(self):
+        broken = spec_for(self.device_id)
+        broken["assets"][0]["metrics"][0]["evidence_passages"] = ["User provided channel_x in mm from 10 to 11"]
+        with patch("dataset_gen.is_live", return_value=True), \
+                patch("dataset_gen.generate_json", side_effect=[{"spec": broken},
+                                                               {"spec": spec_for(self.device_id)}]) as model:
+            result = dataset_gen.generate_spec("", "channel_x unit mm\nchannel_x synthetic range 10 to 11")
+        self.assertEqual(result["assets"][0]["metrics"][0]["unit"], "mm")
         self.assertEqual(model.call_count, 2)
         self.assertIn("Correct the MODEL OUTPUT", model.call_args.args[0])
 

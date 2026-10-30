@@ -113,6 +113,25 @@ def verify_passages(quote: str, passages: list[str], supplied: str,
     verify_quote(combined, combined, values)
 
 
+def resolve_passages(quote: str, passages: list[str], supplied: str,
+                     values: list[str | float], *, unit: str) -> tuple[str, list[str]]:
+    """Replace bad model-written citations only with a complete, verified source row."""
+    try:
+        verify_passages(quote, passages, supplied, values, unit=unit)
+    except ValueError:
+        for line in sorted(dict.fromkeys(supplied.splitlines()), key=len):
+            if not line.strip() or len(line) > 1400:
+                continue
+            try:
+                verify_passages(line, [], supplied, values, unit=unit)
+            except ValueError:
+                continue
+            logging.getLogger(__name__).info("Replaced a model-written citation with a verified source row.")
+            return line, []
+        raise
+    return quote, passages
+
+
 def verify_quote(quote: str, supplied: str, values: list[str | float]) -> None:
     """Check source membership and literal field values, not semantic entailment."""
     normalized = " ".join((quote or "").split())

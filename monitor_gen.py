@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 import rag
 from nebius_client import generate_json, is_live
 from device_grounding import (ClarificationNeeded, SOURCE_ONLY, generate_grounded,
-                              generation_sources, verify_passages, verify_quote)
+                              generation_sources, resolve_passages, verify_quote)
 from live.rest_adapter import _PARAM_URL
 
 
@@ -117,10 +117,11 @@ def _validate_plan(raw: dict, supplied: str) -> dict:
         ], answer=plan.answer)
     for param in plan.params:
         try:
-            verify_passages(param.evidence, param.evidence_passages, supplied,
-                            [param.pid, param.unit] + ([param.label] if param.label else []) +
-                            ([param.path] if param.path else []) +
-                            [v for v in (param.lower, param.upper) if v is not None], unit=param.unit)
+            param.evidence, param.evidence_passages = resolve_passages(
+                param.evidence, param.evidence_passages, supplied,
+                [param.pid, param.unit] + ([param.label] if param.label else []) +
+                ([param.path] if param.path else []) +
+                [v for v in (param.lower, param.upper) if v is not None], unit=param.unit)
         except ValueError as error:
             raise ClarificationNeeded([
                 f"I couldn't verify the supplied evidence for parameter **{param.pid}**. "
