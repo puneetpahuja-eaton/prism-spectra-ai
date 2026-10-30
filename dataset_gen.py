@@ -117,15 +117,19 @@ _SCHEMA_HINT = (
 
 
 def _draft_schema(asset_count: int | None) -> type[BaseModel]:
-    if asset_count is None:
-        return DatasetDraft
-    if not 1 <= asset_count <= 10:
+    if asset_count is not None and not 1 <= asset_count <= 10:
         raise ValueError("Choose between 1 and 10 synthetic assets.")
     spec_schema = create_model(
-        f"DatasetSpec{asset_count}Assets", __base__=DatasetSpec,
-        assets=(list[AssetSpec], Field(min_length=asset_count, max_length=asset_count,
-                                      json_schema_extra={"uniqueItems": True})))
-    return create_model(f"DatasetDraft{asset_count}Assets", __base__=DatasetDraft,
+        "DatasetSpecExplicitSampling", __base__=DatasetSpec,
+        duration_days=(int, Field(ge=1, le=14, description="Replay duration in days from the user's request or guidance")),
+        sample_interval_min=(int, Field(ge=1, le=1440, description="Synthetic sample interval in minutes from the user's request or guidance")))
+    if asset_count is not None:
+        spec_schema = create_model(
+            f"DatasetSpec{asset_count}Assets", __base__=spec_schema,
+            assets=(list[AssetSpec], Field(min_length=asset_count, max_length=asset_count,
+                                          json_schema_extra={"uniqueItems": True})))
+    name = "DatasetDraftExplicitSampling" if asset_count is None else f"DatasetDraft{asset_count}Assets"
+    return create_model(name, __base__=DatasetDraft,
                         spec=(spec_schema | None, None))
 
 
@@ -140,6 +144,8 @@ def generate_spec(device_context: str, request: str, reference: str = "", answer
         "monitored device. Select only supplied metrics, ranges and units, grounded "
         "in the context and referenced parameter list. Include only synthetic anomalies requested by "
         "the user. Ask for missing metrics, units, ranges, assets or sampling details. "
+        "Return duration_days and sample_interval_min explicitly, matching the user's requested duration "
+        "and sampling. Never omit them or substitute schema defaults for supplied choices. "
         "Explicit user-selected synthetic sampling governs this dataset only; it does not change "
         "the actual device's live polling configuration.\n\n"
         f"{_SCHEMA_HINT}\n\n"

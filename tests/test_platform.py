@@ -929,7 +929,7 @@ class MetricsFixTests(PlatformTestBase):
                                               "make a dataset")
         self.assertEqual(spec["assets"][0]["id"], "M1")
         self.assertEqual(spec["duration_days"], 3)
-        self.assertIs(generate.call_args.args[1], dataset_gen.DatasetDraft)
+        self.assertTrue(issubclass(generate.call_args.args[1], dataset_gen.DatasetDraft))
         dataset = dataset_gen.build_dataset(dataset_gen.DatasetSpec.model_validate(spec))
         self.assertGreaterEqual(len(dataset.history), 20)
 

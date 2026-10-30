@@ -21,7 +21,7 @@ T = TypeVar("T")
 _active: ContextVar["Workflow | None"] = ContextVar("workflow", default=None)
 _STAGES = {"specta", "retrieve", "dataset", "monitor", "nebius_chat", "nebius_embeddings",
            "diagnosis", "public_research", "evidence_comparison", "evaluation"}
-_USAGE = {"prompt_tokens", "completion_tokens", "total_tokens", "credits"}
+_USAGE = {"prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens", "credits"}
 
 
 def tracing_enabled() -> bool:
@@ -126,6 +126,9 @@ def model_usage(data: dict, model: str) -> None:
         if isinstance(usage, dict):
             current.report["stages"][-1]["usage"] = {
                 key: value for key, value in usage.items() if key in _USAGE and type(value) in (int, float)}
+            details = usage.get("completion_tokens_details")
+            if isinstance(details, dict) and type(details.get("reasoning_tokens")) in (int, float):
+                current.report["stages"][-1]["usage"]["reasoning_tokens"] = details["reasoning_tokens"]
 
 
 def recovered_output_budget() -> None:

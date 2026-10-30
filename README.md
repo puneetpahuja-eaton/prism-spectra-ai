@@ -140,6 +140,13 @@ It is not the VS Code extension and does not have terminal or editor access.
   Monitoring reuses the already retrieved context rather than retrieving twice.
 - Device dataset/monitoring generation starts with a 32,768-token allowance,
   including reasoning, rather than spending a smaller attempt before retrying.
+  For the verified Nemotron-3.5-Lightning model, these source-extraction calls use
+  `reasoning_effort=none` to avoid exhausting the allowance on repetitive private
+  reasoning while copying dozens of fields. General chat and incident analysis
+  retain their model defaults; other configured model IDs are not overridden.
+  Provider-reported numeric reasoning usage is shown when supplied.
+  The generated dataset schema requires explicit duration and sampling values;
+  omitted model fields cannot silently select the manual three-day default.
   Other structured calls with smaller budgets can recover once from explicit
   exhaustion, capped at 32,768 tokens. Truncated output is never accepted.
   Schema/evidence corrections are separately bounded; usage includes failed

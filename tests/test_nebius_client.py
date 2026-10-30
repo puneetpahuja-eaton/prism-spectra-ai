@@ -83,12 +83,13 @@ class NebiusClientTests(unittest.TestCase):
         with patch.dict(os.environ, {
             "AI_PROVIDER": "nebius", "NEBIUS_API_KEY": "test-key", "FORCE_MOCK": "0",
         }, clear=True), patch("nebius_client._nebius_generate_text", side_effect=[invalid, corrected]) as model:
-            result = generate_json("One synthetic asset.", DatasetDraft, repair_schema=True)
+            result = generate_json("One synthetic asset.", DatasetDraft, repair_schema=True, reasoning=False)
         self.assertEqual(len(result["spec"]["assets"]), 1)
         self.assertEqual(model.call_count, 2)
         self.assertIn("Asset IDs must be unique", model.call_args.args[0])
         self.assertIn("previous output is not evidence", model.call_args.args[0])
         self.assertIs(model.call_args.kwargs["schema"], DatasetDraft)
+        self.assertTrue(all(call.kwargs["reasoning"] is False for call in model.call_args_list))
 
     def test_schema_repair_stops_after_one_attempt_and_reports_failure(self):
         with patch.dict(os.environ, {
@@ -153,11 +154,12 @@ class NebiusClientTests(unittest.TestCase):
             "LANGSMITH_TRACING": "false",
         }, clear=True), patch("nebius_client.requests.post", side_effect=[exhausted, completed]) as post:
             with workflow.Workflow("specta") as run:
-                result = generate_json("Supplied facts only.", SampleAnswer, max_output_tokens=16384)
+                result = generate_json("Supplied facts only.", SampleAnswer, max_output_tokens=16384, reasoning=False)
         self.assertEqual(result["answer"], "Validated answer")
         self.assertEqual([call.kwargs["json"]["max_tokens"] for call in post.call_args_list], [16384, 32768])
         self.assertEqual(post.call_args_list[0].kwargs["json"]["response_format"],
                          post.call_args_list[1].kwargs["json"]["response_format"])
+        self.assertTrue(all(call.kwargs["json"]["reasoning_effort"] == "none" for call in post.call_args_list))
         self.assertEqual(run.report["status"], "complete")
         self.assertEqual([event["status"] for event in run.report["stages"]], ["recovered", "succeeded"])
         self.assertEqual(run.report["stages"][0]["usage"]["completion_tokens"], 16384)

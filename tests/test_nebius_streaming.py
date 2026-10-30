@@ -67,6 +67,27 @@ class NebiusStreamingTests(unittest.TestCase):
                 patch("nebius_client._generation_clock", side_effect=[0, 130, 245, 246]):
             self.assertEqual(nebius_client.generate_json("Synthetic test.", StreamAnswer)["answer"], "ok")
 
+    def test_device_extraction_can_disable_verified_nemotron_reasoning_and_report_zero_tokens(self):
+        response = stream_response([
+            chunk('{"answer":"ok"}', finish="stop"),
+            {"choices": [], "usage": {"completion_tokens": 10,
+                                     "completion_tokens_details": {"reasoning_tokens": 0}}},
+            "[DONE]",
+        ])
+        with patch("nebius_client.requests.post", return_value=response) as post:
+            with workflow.Workflow("specta") as run:
+                nebius_client.generate_json("Extract supplied synthetic values.", StreamAnswer, reasoning=False)
+        self.assertEqual(post.call_args.kwargs["json"]["reasoning_effort"], "none")
+        self.assertEqual(run.report["stages"][0]["usage"]["reasoning_tokens"], 0)
+
+    def test_general_reasoning_defaults_and_other_models_are_not_overridden(self):
+        for model, reasoning in (("nvidia/Nemotron-3_5-Lightning", True), ("nvidia/another-model", False)):
+            response = stream_response([chunk('{"answer":"ok"}', finish="stop"), "[DONE]"])
+            with patch.dict(os.environ, {"NEBIUS_MODEL": model}), \
+                    patch("nebius_client.requests.post", return_value=response) as post:
+                nebius_client.generate_json("Synthetic test.", StreamAnswer, reasoning=reasoning)
+            self.assertNotIn("reasoning_effort", post.call_args.kwargs["json"])
+
     def test_active_stream_is_still_bounded_by_absolute_generation_deadline(self):
         response = stream_response([chunk(reasoning="still working")])
         with patch("nebius_client.requests.post", return_value=response) as post, \

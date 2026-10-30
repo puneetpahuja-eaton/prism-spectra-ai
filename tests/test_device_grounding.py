@@ -33,6 +33,23 @@ def small_dataset():
 
 
 class DeviceGroundingTests(PlatformTestBase):
+    def test_generation_schema_requires_explicit_sampling_without_changing_manual_defaults(self):
+        for asset_count in (None, 1):
+            with self.subTest(asset_count=asset_count):
+                schema = dataset_gen._draft_schema(asset_count)
+                raw = {"spec": {"assets": [{"id": "A", "metrics": [
+                    {"name": "x", "unit": "mm", "normal_min": 10, "normal_max": 11}
+                ]}]}}
+                with self.assertRaises(ValueError):
+                    schema.model_validate(raw)
+                raw["spec"].update(duration_days=1, sample_interval_min=5)
+                spec = schema.model_validate(raw).spec
+                self.assertEqual(spec.duration_days, 1)
+                self.assertEqual(spec.sample_interval_min, 5)
+        manual = dataset_gen.DatasetSpec.model_validate(raw["spec"])
+        self.assertEqual(manual.duration_days, 1)
+        self.assertEqual(dataset_gen.DatasetSpec.model_fields["duration_days"].default, 3)
+
     def test_bad_model_quote_is_replaced_only_by_a_complete_verbatim_source_row(self):
         source = "channel_unique unit mm; channel_unique synthetic range 10 to 11."
         raw = {"spec": {"assets": [{"id": "A", "metrics": [
@@ -67,6 +84,7 @@ class DeviceGroundingTests(PlatformTestBase):
                 dataset_gen.generate_spec(irrelevant, request, irrelevant + target)
         prompt = model.call_args.args[0]
         self.assertEqual(model.call_args.kwargs["max_output_tokens"], 32768)
+        self.assertFalse(model.call_args.kwargs["reasoning"])
         self.assertLess(len(prompt), 38000)
         self.assertIn(request, prompt)
         self.assertIn(target, prompt)
