@@ -12,6 +12,8 @@ optional event-log decode spec).
 """
 from __future__ import annotations
 
+import logging
+
 from pydantic import BaseModel, Field, model_validator
 
 import rag
@@ -23,7 +25,7 @@ from live.rest_adapter import _PARAM_URL
 
 class MonitorParam(BaseModel):
     pid: str = Field(description="Exact parameter ID from supplied sources OR explicit user guidance, including the current reply")
-    label: str = Field(default="", description="Source-defined parameter label")
+    label: str = Field(default="", description="Exact source-defined label, or empty when no literal label is supplied; do not combine separate table headings")
     unit: str = Field(default="")
     lower: float | None = Field(default=None, description="Lower alarm limit, if known")
     upper: float | None = Field(default=None, description="Upper alarm limit, if known")
@@ -76,6 +78,10 @@ _SCHEMA_HINT = (
     "Do not re-ask answered questions or demand schema names. Never invent device facts. "
     "Leave event_log null unless the supplied material specifies the full layout. "
     "Return every requested parameter exactly once in params, not just an answer describing the plan. "
+    "Labels are optional display text: copy a literal source label or leave label empty. Do not concatenate "
+    "quantity/scope/value-kind headings into a new label. The parameter ID identifies unlabeled parameters. "
+    "For table columns named time, use that parameter's documented unit rather than the quantity's unit; "
+    "ask when its required unit is not supplied. "
     "Keep evidence minimal: copy only the short passage supporting that parameter's fields, "
     "not the entire parameter list or unrelated source text. Keep answer and notes brief."
 )
@@ -115,7 +121,14 @@ def _validate_plan(raw: dict, supplied: str) -> dict:
         raise ClarificationNeeded(plan.missing_details or [
             "Which documented parameters should I monitor, and how often should I poll them?"
         ], answer=plan.answer)
+    labels_replaced = 0
     for param in plan.params:
+        if param.label:
+            try:
+                verify_quote(param.label, supplied, [])
+            except ValueError:
+                param.label = param.pid
+                labels_replaced += 1
         try:
             param.evidence, param.evidence_passages = resolve_passages(
                 param.evidence, param.evidence_passages, supplied,
@@ -127,6 +140,12 @@ def _validate_plan(raw: dict, supplied: str) -> dict:
                 f"I couldn't verify the supplied evidence for parameter **{param.pid}**. "
                 "Can you confirm its unit, value path and any limits, or attach the relevant source?"
             ], repairable=True) from error
+    if labels_replaced:
+        logging.getLogger(__name__).warning(
+            "Replaced %d unquoted model-written display labels with source-verified parameter IDs.",
+            labels_replaced)
+        plan.notes = (plan.notes + "\n" if plan.notes else "") + (
+            "Unquoted generated display labels were replaced with source-verified parameter IDs.")
     if plan.hex_as_float is not None:
         try:
             verify_quote(plan.encoding_evidence, supplied, [])

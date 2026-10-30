@@ -172,6 +172,12 @@ It is not the VS Code extension and does not have terminal or editor access.
   correct schema errors once and unsupported model-written citations once before
   reporting a failure; these bounded corrections never relax validation or
   convert the model's previous claims into source evidence.
+- Monitoring display labels must be literal supplied text. If the model composes
+  an unquoted label from separate table headings, the plan uses the verified
+  parameter ID as its label and records that choice in its notes. This never
+  repairs or substitutes IDs, units, value paths, limits or event decoding.
+  Time-column units must come from the supplied device source or user guidance,
+  not from the measured quantity's unit.
 - **New chat** clears the current device's conversation, attachments and pending
   task, without deleting stored devices, documents or datasets. Conversation state
   is session-local, not durable across browser reconnection/server restarts.

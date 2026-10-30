@@ -33,6 +33,55 @@ def small_dataset():
 
 
 class DeviceGroundingTests(PlatformTestBase):
+    def test_compact_table_composed_labels_do_not_reject_verified_monitor_facts(self):
+        source = []
+        params = []
+        for index in range(54):
+            pid = str(91000 + index)
+            kind = ("present", "peak", "time")[index % 3]
+            unit = "s" if kind == "time" else "mm"
+            row = f"Parameter {pid}: quantity Distance; scope Circuit; kind {kind}; unit {unit}; path value."
+            source.append(row)
+            params.append({"pid": pid, "label": f"Distance Circuit {kind}", "unit": unit,
+                           "path": "value", "evidence": row})
+        with patch("monitor_gen.is_live", return_value=True), \
+                patch("monitor_gen.generate_json", return_value={
+                    "poll_interval_s": 60, "params": params}) as model, \
+                self.assertLogs("monitor_gen", level="WARNING") as logs:
+            plan = monitor_gen.generate_plan(
+                "D", "Monitor all supplied IDs every 60 seconds.", reference="\n".join(source),
+                device_context="")
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual({param["pid"] for param in plan["params"]}, {str(91000 + i) for i in range(54)})
+        self.assertTrue(all(param["label"] == param["pid"] for param in plan["params"]))
+        self.assertTrue(all(param["path"] == "value" for param in plan["params"]))
+        self.assertEqual([param["unit"] for param in plan["params"]], [
+            "s" if i % 3 == 2 else "mm" for i in range(54)])
+        self.assertIn("display labels", plan["notes"])
+        self.assertNotIn("91000", " ".join(logs.output))
+
+    def test_literal_monitor_label_is_preserved(self):
+        row = "ID TEST_001 label source_channel unit mm path value."
+        plan = monitor_gen._validate_plan({
+            "poll_interval_s": 60, "params": [{"pid": "TEST_001", "label": "source_channel",
+                                              "unit": "mm", "path": "value", "evidence": row}]}, row)
+        self.assertEqual(plan["params"][0]["label"], "source_channel")
+        self.assertEqual(plan["notes"], "")
+
+    def test_label_fallback_never_repairs_unsupported_monitor_facts(self):
+        row = "ID TEST_001 quantity Distance; scope Circuit; unit mm path value."
+        for changed in ({"pid": "TEST_999"}, {"unit": "A"}, {"path": "invented_path"}, {"upper": 999}):
+            with self.subTest(changed=changed):
+                param = {"pid": "TEST_001", "label": "Distance Circuit", "unit": "mm",
+                         "path": "value", "evidence": row, **changed}
+                with patch("monitor_gen.is_live", return_value=True), \
+                        patch("monitor_gen.generate_json", return_value={
+                            "poll_interval_s": 60, "params": [param]}) as model:
+                    with self.assertRaisesRegex(ValueError, "generated evidence after one correction"):
+                        monitor_gen.generate_plan("D", "Monitor the supplied ID every 60 seconds.",
+                                                  reference=row, device_context="")
+                self.assertEqual(model.call_count, 2)
+
     def test_generation_schema_requires_explicit_sampling_without_changing_manual_defaults(self):
         for asset_count in (None, 1):
             with self.subTest(asset_count=asset_count):
