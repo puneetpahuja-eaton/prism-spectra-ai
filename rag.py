@@ -175,6 +175,8 @@ class ModeResponse(BaseModel):
     answer: str = Field(default="", description="The answer, plan, or result (markdown). Include fenced blocks for files.")
     task: Literal["chat", "dataset", "monitor"] = Field(
         default="chat", description="In Agent mode route executable dataset or live-monitoring-plan requests to the matching tool")
+    asset_count: int | None = Field(default=None, ge=1, le=10,
+                                   description="Dataset tool: number of synthetic assets requested by the user; use 1 when unspecified")
 
 
 def converse(device_id: str, query: str, *, mode: str = "ask", screen_context: str = "",
@@ -236,7 +238,7 @@ def converse(device_id: str, query: str, *, mode: str = "ask", screen_context: s
             "artifacts": [] if result.get("needs_clarification") else _extract_artifacts(answer_text),
             "citations": source_names,
             "sources": source_names, "backend": model_backend(), "mode": mode,
-            "task": result.get("task", "chat")}
+            "task": result.get("task", "chat"), "asset_count": result.get("asset_count")}
 
 
 def assist(device_id: str, query: str, *, screen_context: str = "", role: str = "user",

@@ -127,11 +127,11 @@ def run_message(conv: specta.Conversation, text: str, *, start_task: bool = Fals
 
 def start_generation(device_id: str, kind: specta.TaskKind, request: str, *,
                      reference_path: str = "", days: int | None = None,
-                     interval_min: int | None = None) -> None:
+                     interval_min: int | None = None, asset_count: int = 1) -> None:
     conv = conversation(device_id)
     conv.mode = "agent"
     specta.begin_task(conv, kind, request, reference_path=reference_path,
-                      days=days, interval_min=interval_min)
+                      days=days, interval_min=interval_min, asset_count=asset_count)
     st.session_state["specta_selected_device"] = device_id
     if st.session_state.get("specta_page") != "Ask the device":
         st.session_state["specta_open"] = True
@@ -239,6 +239,11 @@ def _chat_controls(surface: str) -> specta.Conversation | None:
             st.session_state[ref_key] = conv.task.reference_path
             st.text_input("Repository reference path (optional)", key=ref_key,
                           on_change=_remember_task_field, args=(ref_key, conv.device_id, "reference_path"))
+            if conv.task.kind == "dataset":
+                count_key = f"specta_count_{surface}_{conv.task.id}"
+                st.session_state[count_key] = conv.task.asset_count
+                st.number_input("Synthetic asset count", min_value=1, max_value=10, key=count_key,
+                                on_change=_remember_task_field, args=(count_key, conv.device_id, "asset_count"))
             if conv.task.days is not None and conv.task.interval_min is not None:
                 timing = st.columns(2)
                 for col, field, label, maximum in (
@@ -258,8 +263,9 @@ def chat_surface(surface: str) -> None:
         conv = _chat_controls(surface)
     if conv is None:
         return
-    with st.container(height=330 if surface == "dock" else 520, border=False,
-                      key=f"specta_{surface}_thread", autoscroll=True):
+    thread = st.container(height=330 if surface == "dock" else 520, border=False,
+                          key=f"specta_{surface}_thread", autoscroll=True)
+    with thread:
         if not conv.messages:
             st.markdown("**Hi, I'm Specta.**\n\nAsk about this device, plan a workflow, or create a synthetic "
                         "dataset or monitoring plan. If facts are missing, I'll ask here and continue from your reply.")
@@ -285,7 +291,12 @@ def chat_surface(surface: str) -> None:
                      "content": f"I couldn't read the attachment: {error}\n\nAttach a supported readable source and resend."},
                 ])
                 st.rerun()
-        run_message(conv, text.strip() or "Use the attached sources to continue my request.")
+        prompt = text.strip() or "Use the attached sources to continue my request."
+        with thread:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant", avatar=":material/smart_toy:"):
+                run_message(conv, prompt)
         st.rerun()
 
 
@@ -318,6 +329,8 @@ def dataset_builder(device_id: str) -> None:
                                placeholder="Describe the metrics, supplied units/ranges and desired synthetic scenarios.")
         path = st.text_input("Reference a repo file for parameters (optional path)", key=f"ds_ref_{device_id}",
                              placeholder="docs/parameters.csv")
+        count = st.number_input("Synthetic asset count", min_value=1, max_value=10, value=1,
+                                step=1, key=f"ds_count_{device_id}")
         cols = st.columns(2)
         days = cols[0].number_input("How many days of data?", min_value=1, max_value=14, value=3,
                                     step=1, key=f"ds_days_{device_id}")
@@ -328,7 +341,7 @@ def dataset_builder(device_id: str) -> None:
                    "At least 8 are needed for both recovering and persistent anomaly scenarios.")
         if st.button("Generate dataset", key=f"ds_gen_{device_id}", type="primary", disabled=not request.strip()):
             start_generation(device_id, "dataset", request, reference_path=path,
-                             days=int(days), interval_min=int(interval))
+                             days=int(days), interval_min=int(interval), asset_count=int(count))
 
 
 def render_workspace() -> None:

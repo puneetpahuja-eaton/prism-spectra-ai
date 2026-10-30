@@ -107,12 +107,38 @@ def nebius_post(endpoint: str, payload: dict) -> dict:
                 timeout=(10, timeout),
             )
         except requests.RequestException as error:
-            raise ModelUnavailable("Nebius Token Factory request failed. Check connectivity and retry.") from error
+            logging.getLogger(__name__).warning(
+                "Nebius Token Factory transport failure (%s).", type(error).__name__)
+            if isinstance(error, requests.exceptions.SSLError):
+                detail = ("TLS certificate verification failed. Check the trusted CA configuration "
+                          "on the app host; do not disable certificate verification.")
+            elif isinstance(error, requests.exceptions.ProxyError):
+                detail = "The proxy connection failed. Check the app host's proxy and network configuration."
+            elif isinstance(error, requests.exceptions.ConnectTimeout):
+                detail = "The 10-second connection timeout expired before Nebius could be reached. Check the app host's network."
+            elif isinstance(error, requests.exceptions.ReadTimeout):
+                detail = (f"Nebius did not return a response within the {timeout}-second read timeout. "
+                          "It may still be processing; wait before retrying to avoid duplicate work. "
+                          "This is not a confirmed credit error.")
+            elif isinstance(error, requests.exceptions.Timeout):
+                detail = "The request timed out. Wait before retrying; this is not a confirmed credit error."
+            elif isinstance(error, requests.exceptions.ConnectionError):
+                detail = "The app host could not connect to Nebius. Check network/DNS availability and retry later."
+            else:
+                detail = "A transport failure prevented the request from completing. Check the app host's connectivity."
+            raise ModelUnavailable(f"Nebius Token Factory: {detail}") from error
         if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
             time.sleep(attempt + 1)
             continue
         if not response.ok:
-            raise ModelUnavailable(f"Nebius Token Factory {endpoint} request failed with HTTP {response.status_code}.")
+            hint = {
+                401: " API key authentication failed. Check the key configured on the app host.",
+                402: " The provider reported a payment or credit problem. Check billing and promo credits for the account used by this key.",
+                403: " Access was denied. Check account/model permission for this key.",
+                429: " A rate or quota limit was reached. Check request rate and account quota; this does not establish promo-credit status.",
+            }.get(response.status_code, "")
+            raise ModelUnavailable(
+                f"Nebius Token Factory {endpoint} request failed with HTTP {response.status_code}.{hint}")
         try:
             data = response.json()
         except ValueError as error:

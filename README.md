@@ -116,7 +116,8 @@ It is not the VS Code extension and does not have terminal or editor access.
   or other necessary facts are missing, Specta asks up to three focused questions
   in the conversation. Reply in either chat surface to continue the same task.
   There is no separate clarification button or answers form. Selected duration,
-  sampling and repository reference are retained. Active **Task settings** let you
+  sampling, synthetic asset count and repository reference are retained. The model's
+  output schema is constrained to that exact asset count. Active **Task settings** let you
   correct the reference or sampling; then send `retry`.
 - The monitoring builder follows the same flow. Downloads, source evidence and
   reviewed application appear inside the conversation. Generation never starts
@@ -204,6 +205,29 @@ Do not paste it into chat, commit it, or include it in a video. Then start the a
 
 The launcher explicitly selects Nebius for both text and embeddings and disables
 mock mode. The sidebar displays both selected backends.
+
+### Hackathon credits and provider errors
+
+Creating an API key does not redeem promotional credits. The official
+[hackathon resources](https://nebiusglobalaihackathon.devpost.com/resources)
+list a $25 Token Factory offer via the
+[promo form](https://nebius.com/promo-code?utm_promo_event_code=2026-devpost-global-ai-hack&utm_promo_code_type=Token_Factory&utm_promo_activation_code=NEBIUS-DEVPOST-GLOBAL26),
+using activation code `NEBIUS-DEVPOST-GLOBAL26`. The free
+[Nebius Builders Program](https://dev.nebius.com/builders) also lists $25 Token
+Factory credit and $25 Tavily credit, subject to eligibility, availability and
+partner terms. Complete the claims and confirm activation/remaining balances
+in the respective provider accounts. Use the account associated with the app's
+configured key; the app login is separate from provider accounts.
+
+A connection failure is not proof of exhausted credit. Specta distinguishes
+connection/read timeouts, TLS/proxy failures, API-key authentication, HTTP 402
+payment/credit responses and HTTP 429 rate/quota responses. Sanitized transport
+exception types are logged without request contents or keys. Transport failures
+are not automatically retried: a timed-out generation may still be processing.
+The conversation and active task remain available for a deliberate `retry`.
+`NEBIUS_TIMEOUT_SECONDS` sets the read deadline (default 120 seconds); the
+connection deadline is 10 seconds. Adjust the deadline only after confirming
+that slow responses, rather than connectivity or account errors, are the cause.
 
 The seeded demo login is `admin@kairos.ai` / `admin12345`; change the password
 before exposing a deployment. Without a model key, the app can run in local

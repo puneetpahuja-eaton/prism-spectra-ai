@@ -18,7 +18,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, create_model, model_validator
 
 from device_grounding import ClarificationNeeded, SOURCE_ONLY, generate_grounded, verify_passages, verify_quote
 from fleet_data import FleetAsset, FleetDataset, Reading
@@ -113,7 +113,21 @@ _SCHEMA_HINT = (
 )
 
 
-def generate_spec(device_context: str, request: str, reference: str = "", answers: str = "") -> dict:
+def _draft_schema(asset_count: int | None) -> type[BaseModel]:
+    if asset_count is None:
+        return DatasetDraft
+    if not 1 <= asset_count <= 10:
+        raise ValueError("Choose between 1 and 10 synthetic assets.")
+    spec_schema = create_model(
+        f"DatasetSpec{asset_count}Assets", __base__=DatasetSpec,
+        assets=(list[AssetSpec], Field(min_length=asset_count, max_length=asset_count,
+                                      json_schema_extra={"uniqueItems": True})))
+    return create_model(f"DatasetDraft{asset_count}Assets", __base__=DatasetDraft,
+                        spec=(spec_schema | None, None))
+
+
+def generate_spec(device_context: str, request: str, reference: str = "", answers: str = "", *,
+                  asset_count: int | None = None) -> dict:
     if not is_live():
         raise RuntimeError("A configured live AI provider is required to generate a dataset spec.")
     prompt = (
@@ -130,8 +144,11 @@ def generate_spec(device_context: str, request: str, reference: str = "", answer
         f"User request: {request}\n\n"
         f"User answers to clarifying questions (if any): {answers}"
     )
+    if asset_count is not None:
+        prompt += f"\nSelected synthetic asset count: exactly {asset_count}. Return each asset exactly once."
     supplied = "\n".join((device_context, reference, request, answers))
-    return generate_grounded(generate_json, prompt, DatasetDraft, lambda raw: _validate_draft(raw, supplied))
+    return generate_grounded(generate_json, prompt, _draft_schema(asset_count),
+                             lambda raw: _validate_draft(raw, supplied))
 
 
 def _validate_draft(raw: dict, supplied: str) -> dict:

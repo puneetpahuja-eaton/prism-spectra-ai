@@ -31,6 +31,7 @@ class Task:
     answers: list[str] = field(default_factory=list)
     days: int | None = None
     interval_min: int | None = None
+    asset_count: int = 1
     id: str = field(default_factory=lambda: uuid4().hex)
 
 
@@ -45,11 +46,11 @@ class Conversation:
 
 def begin_task(conversation: Conversation, kind: TaskKind, request: str, *,
                reference_path: str = "", days: int | None = None,
-               interval_min: int | None = None) -> None:
+               interval_min: int | None = None, asset_count: int = 1) -> None:
     if kind not in ("dataset", "monitor"):
         raise ValueError("Specta supports dataset and monitoring-plan generation tasks.")
     conversation.task = Task(kind, request, reference_path=reference_path.strip(),
-                             days=days, interval_min=interval_min,
+                             days=days, interval_min=interval_min, asset_count=asset_count,
                              prior_guidance=_history_guidance(conversation))
 
 
@@ -141,7 +142,7 @@ def _run_task(conversation: Conversation, notify: Callable[[str], None]) -> dict
         if task.days is not None and task.interval_min is not None:
             request += (f"\nAuthoritative UI choices: synthetic replay duration {task.days} days; "
                         f"sample interval {task.interval_min} minutes. These choices do not require reconfirmation.")
-        spec = dataset_gen.generate_spec(context, request, reference, answers)
+        spec = dataset_gen.generate_spec(context, request, reference, answers, asset_count=task.asset_count)
         if task.days is not None:
             spec["duration_days"] = task.days
         if task.interval_min is not None:
@@ -201,7 +202,7 @@ def respond(conversation: Conversation, message: str, *, mode: str = "agent",
                 role=role, history=conversation.messages[:-1], attached_context=attached)
             task_kind = response.get("task", "chat")
             if task_kind in ("dataset", "monitor") and mode == "agent" and not response.get("needs_clarification"):
-                begin_task(conversation, task_kind, message)
+                begin_task(conversation, task_kind, message, asset_count=response.get("asset_count") or 1)
                 result = _run_task(conversation, notify)
                 conversation.task = None
             else:

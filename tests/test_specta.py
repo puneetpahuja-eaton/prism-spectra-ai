@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import requests
+
 os.environ["FORCE_MOCK"] = "1"
 
 from streamlit.testing.v1 import AppTest
@@ -75,6 +77,18 @@ class SpectaTests(PlatformTestBase):
                 verify_passages("channel_x unit mm", passages,
                                 "channel_x unit mm\nchannel_x synthetic range 10 to 11", values)
 
+    def test_selected_asset_count_is_enforced_by_provider_schema(self):
+        for count in (1, 3):
+            schema = dataset_gen._draft_schema(count).model_json_schema()
+            assets = schema["$defs"][f"DatasetSpec{count}Assets"]["properties"]["assets"]
+            self.assertEqual(assets["minItems"], count)
+            self.assertEqual(assets["maxItems"], count)
+        one = dataset_gen._draft_schema(1)
+        duplicate = spec_for(self.device_id)
+        duplicate["assets"] *= 2
+        with self.assertRaises(ValueError):
+            one.model_validate({"spec": duplicate})
+
     def test_bad_model_evidence_is_corrected_without_reasking_supplied_facts(self):
         broken = spec_for(self.device_id)
         broken["assets"][0]["metrics"][0]["evidence_passages"] = ["User provided channel_x in mm from 10 to 11"]
@@ -107,6 +121,26 @@ class SpectaTests(PlatformTestBase):
         with patch("specta.rag.retrieve", return_value=[]), \
                 patch("specta.dataset_gen.generate_spec", return_value=spec_for(self.device_id)):
             self.assertEqual(specta.respond(self.conv, "retry")["status"], "complete")
+
+    def test_real_client_timeout_retains_task_without_claiming_generation_or_empty_credit(self):
+        specta.begin_task(self.conv, "dataset", "Generate data", days=3, interval_min=60)
+        task = self.conv.task
+        with patch.dict(os.environ, {
+            "AI_PROVIDER": "nebius", "FORCE_MOCK": "0", "NEBIUS_API_KEY": "test-key",
+            "NEBIUS_TIMEOUT_SECONDS": "120",
+        }), patch("specta.rag.retrieve", return_value=[]), \
+                patch("gemini_client.netsetup.configure_tls"), \
+                patch("gemini_client.requests.post", side_effect=requests.exceptions.ReadTimeout) as post:
+            response = specta.respond(self.conv, "Generate data", start_task=True)
+        self.assertEqual(response["status"], "error")
+        self.assertIn("120-second read timeout", response["content"])
+        self.assertIn("not a confirmed credit error", response["content"])
+        self.assertIn("wait before retrying", response["content"])
+        self.assertNotIn("dataset", response)
+        self.assertIs(self.conv.task, task)
+        self.assertEqual(self.conv.task.interval_min, 60)
+        self.assertEqual(self.conv.messages[-1], response)
+        post.assert_called_once()
 
     def test_monitor_questions_resume_and_never_apply_implicitly(self):
         specta.begin_task(self.conv, "monitor", "Monitor parameter 17")
